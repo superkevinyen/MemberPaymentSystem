@@ -1,101 +1,107 @@
-# MemberPaymentSystem - Porting Guide
+# Porting Guide（上线手册 + 前端对接指南）
 
-## 🎯 目标
-
-本手册指导如何将 `mps_full.sql` 从开发环境迁移到生产环境，并确保系统安全、稳定。
+> 目标：把 MPS 从开发环境平滑迁移到 Staging/Production，并指导前端稳定对接。
 
 ---
 
-## 📦 部署步骤
+## 1. 环境与权限
 
-### 1. 执行数据库脚本
-在 Supabase SQL Editor 中运行：
-```sql
-\i mps_full.sql
-```
-
-### 2. 创建应用角色
-```sql
-create role app_role noinherit login password '***';
-```
-
-### 3. 授权
-```sql
-grant usage on schema app, audit, sec to app_role;
-grant select on app.v_user_cards, app.v_usage_logs to app_role;
-grant execute on function
-  app.rotate_card_qr,
-  app.merchant_charge_by_qr,
-  app.merchant_refund_tx,
-  app.user_recharge_personal_card,
-  app.user_recharge_enterprise_card_admin,
-  app.enterprise_add_member,
-  app.enterprise_remove_member
-to app_role;
-```
-
-### 4. 初始化商户
-```sql
-insert into app.merchants(name, code) values ('Demo Shop', 'SHOP-001');
-insert into app.merchant_users(merchant_id, user_id, role)
-select id, '<auth-user-id>', 'cashier' from app.merchants where code='SHOP-001';
-```
-
-### 5. 初始化会员
-- 用户通过 Supabase Auth 注册 → 自动生成 `member_profiles`
-- 触发器会同步生成一张个人卡
+- **数据库**：Supabase Postgres（开启 `pgcrypto`）。
+- **Schema**：`app`/`audit`/`sec`；默认只读 `public`，务必切到 `app` 查看表。
+- **账号**：
+  - DBA：执行 DDL 与策略（SQL Editor Service Role）。
+  - SRE：维护 Edge Functions 与 Cron 任务。
+  - FE/BE：只需 `anon`/`service_role` key 调用 RPC。
 
 ---
 
-## 🛠️ 运维要点
+## 2. 迁移步骤（建议分段执行，避免回滚）
 
-### 定时任务
-- 每月执行：`app.create_next_partition()`
-- 每日执行：`app.expire_qrcodes()`
+### Step A. 初始化
+- 执行：**schemas、extensions、enums、sequences、helpers**。  
+- 校验：
+  ```sql
+  select schema_name from information_schema.schemata where schema_name in ('app','audit','sec');
+  ```
 
-### 审计与监控
-- 所有敏感操作写入 `audit.event_log`
-- 定期审查 `failed` 或 `cancelled` 状态交易
+### Step B. 建表 + 分区 + 注册表 + 审计
+- 执行：`member_profiles ... enterprise_card_bindings ... transactions (parent) ... DO 块创建当月分区 ... tx/idempotency/merchant_order registries ... audit.event_log`。
+- 校验：
+  ```sql
+  select schemaname, tablename from pg_tables where schemaname='app';
+  select relname from pg_class where relname like 'transactions_%';
+  ```
 
-### 回滚机制
-- 使用 `transaction_compensations` 表记录并追踪补偿
+### Step C. 触发器 + RPC（SECURITY DEFINER）
+- 执行：`after_insert_member_create_card()`、所有 RPC、修正版 `cron_expire_cards()`。
+- 校验：
+  ```sql
+  select proname, prosecdef from pg_proc
+  join pg_namespace n on n.oid=pg_proc.pronamespace
+  where n.nspname='app' and prosecdef;  -- SECURITY DEFINER
+  ```
 
-### 错误码
-- RPC 返回统一结构： `{ code, message, tx_id }`
-- 前端需根据 `code` 做提示或重试
+### Step D. 视图
+- 执行：`v_user_cards`、`v_usage_logs`。
 
----
-
-## 📲 前端对接指南
-
-- 使用 **supabase-js** 调用 `rpc()`
-- 核心页面：
-  - 我的卡片
-  - 扫码支付
-  - 充值
-  - 退款申请
-  - 积分流水
-
-示例：
-```ts
-const { data, error } = await supabase.rpc('user_recharge_personal_card', {
-  p_card_id: cardId,
-  p_amount: 200,
-  p_method: 'wechat',
-  p_reason: '充值',
-  p_metadata: {},
-  p_ext_order_id: 'order-123',
-  p_idempotency_key: 'ide-123'
-});
-```
+### Step E. RLS 最后启用
+- 执行：`enable row level security` + `deny_all` + `*read` 策略。
+- 校验：通过 `auth.uid()` 的会话读取数据，写操作只能走 RPC。
 
 ---
 
-## 🔐 安全与隐私
+## 3. 数据初始化与验收用例
 
-- 不存储明文二维码，只存哈希
-- 企业卡绑定必须由企业管理员操作
-- 所有写操作仅能通过 RPC 完成
+- 等级配置：内置 Lv0~Lv4；可在 `membership_levels` 调整。
+- 商户：创建 `merchants(code)`，并把收银员加入 `merchant_users`。
+- 最少用例：
+  1. 插入 `member_profiles(id=auth.uid())` → 自动发个人卡。
+  2. 旋转个人卡二维码 → 商户扫码支付 → 退款 → 充值。
 
 ---
 
+## 4. 运行维护
+
+- **分区管理**：每月初执行 DO 块创建当月分区和索引；或实现 `ensure_next_month_partition()` 并由 Edge Function 定时调用。
+- **过期处理**：`cron_expire_cards()`（修正版）。
+- **备份与恢复**：按月分区做逻辑备份；优先备份 registries 与最新月交易分区。
+- **监控**：
+  - 错误审计（`audit.event_log`）。
+  - 幂等冲突（`idempotency_registry`）。
+  - 分区缺失（`select relname from pg_class where relname like 'transactions_%'`）。
+
+---
+
+## 5. 前端对接（页面与 RPC 映射）
+
+| 页面/模块 | RPC | 备注 |
+|---|---|---|
+| 我的卡片 | `v_user_cards`（只读） | 展示余额/等级/折扣 |
+| 展示二维码 | `rotate_card_qr` | 返回明文二维码 + 15 分钟过期时间 |
+| 扫码收款（商户） | `merchant_charge_by_qr` | 需登录为商户成员 |
+| 退款（商户） | `merchant_refund_tx` | 仅对“完成的支付”可退，支持部分多次 |
+| 个人充值 | `user_recharge_personal_card` | 支付完成回调后调用 |
+| 企业充值 | `user_recharge_enterprise_card_admin` | 仅企业管理员 |
+| 企业绑定 | `enterprise_add_member` / `enterprise_remove_member` / `enterprise_set_initial_admin` | 绑定需卡密码 |
+
+---
+
+## 6. 回滚与应急
+
+- 回滚 DDL：保持一套“上一个稳定版本” SQL，使用 `BEGIN; ...; COMMIT;` 批量回退。
+- 交易补偿：
+  - 如果第三方支付已扣款但交易未写表：根据外部订单号在 `merchant_order_registry` 查询并重放。
+  - 如余额异常：以 RPC 的“人工调整余额”功能（可扩展）在审计下进行纠偏。
+
+---
+
+## 7. 常见问题（FAQ）
+
+- **执行完没有表？**  
+  可能最后一条语句报错导致整批回滚；请分段执行，或查看 SQL History 的错误信息。并切换 Table Editor 的 schema 为 `app`。
+
+- **`permission denied for table`？**  
+  写操作只能走 RPC；读表需满足 RLS 条件。
+
+- **`unrecognized GET DIAGNOSTICS item`？**  
+  使用 `GET DIAGNOSTICS v_row = ROW_COUNT; v_cnt := v_cnt + v_row;` 的修正版。
