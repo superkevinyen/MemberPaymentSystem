@@ -1,20 +1,20 @@
 'use client';
 
 import { useState, FormEvent } from 'react';
-import { useRouter } from 'next/navigation';
+// import { useRouter } from 'next/navigation'; // Currently unused
 import { createClient } from '@/lib/supabase/client-browser';
 import { toast } from 'react-hot-toast';
 import Link from 'next/link';
-import { getUserRoles } from '@/lib/roles';
+// import { getUserRoles } from '@/lib/roles'; // Currently unused
 
 type AuthMode = 'login' | 'signup';
 type UserType = 'admin' | 'member';
 type MemberLoginMode = 'memberId' | 'phone';
 
 export default function AuthPage({ mode: initialMode }: { mode: 'login' | 'signup' }) {
-  const router = useRouter();
+  // const router = useRouter(); // Currently unused
   
-  const [mode, setMode] = useState<AuthMode>(initialMode);
+  const [mode] = useState<AuthMode>(initialMode);
   const [userType, setUserType] = useState<UserType>('admin');
   const [memberLoginMode, setMemberLoginMode] = useState<MemberLoginMode>('memberId');
 
@@ -32,7 +32,7 @@ export default function AuthPage({ mode: initialMode }: { mode: 'login' | 'signu
     setIsLoading(true);
     const supabase = createClient();
     try {
-      const { data, error } = await supabase.auth.signUp({
+      const { error } = await supabase.auth.signUp({
         email,
         password,
         options: {
@@ -52,9 +52,10 @@ export default function AuthPage({ mode: initialMode }: { mode: 'login' | 'signu
       setEmail('');
       setPassword('');
       
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : '注册时发生未知错误';
       console.error('Sign up error:', error);
-      toast.error(error.message || '注册时发生未知错误', { id: toastId });
+      toast.error(errorMessage, { id: toastId });
     } finally {
       setIsLoading(false);
     }
@@ -67,7 +68,7 @@ export default function AuthPage({ mode: initialMode }: { mode: 'login' | 'signu
 
     try {
       let loginEmail = email;
-      let userIsAdmin = userType === 'admin';
+      const userIsAdmin = userType === 'admin';
 
       // Member login logic
       if (!userIsAdmin) {
@@ -86,25 +87,14 @@ export default function AuthPage({ mode: initialMode }: { mode: 'login' | 'signu
 
       const { data: { user }, error: authError } = await supabase.auth.signInWithPassword({ email: loginEmail, password });
       if (authError || !user) throw authError || new Error('登入失敗，請確認登入資訊');
+ 
+      // The redirect is now handled by the AuthProvider, so we just show a success message.
+      toast.success('登入成功！', { id: toastId });
 
-      toast.success('登入成功！正在為您跳轉...', { id: toastId });
-
-      if (userIsAdmin) {
-        router.push('/enterprise/admin/dashboard');
-      } else {
-        const roles = await getUserRoles(user.id);
-        if (roles.includes('merchant_user')) {
-          router.push('/merchant/dashboard');
-        } else if (roles.includes('enterprise_admin')) {
-          router.push('/enterprise/dashboard');
-        } else {
-          router.push('/user/dashboard');
-        }
-      }
-
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : '登入時發生未知錯誤';
       console.error('Login error:', error);
-      toast.error(error.message || '登入時發生未知錯誤', { id: toastId });
+      toast.error(errorMessage, { id: toastId });
     } finally {
       setIsLoading(false);
     }

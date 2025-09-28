@@ -1,5 +1,7 @@
 import { createClient } from '@/lib/supabase/client-browser';
 
+export type AppRole = 'member' | 'platform_admin' | 'enterprise_admin' | 'merchant_user';
+
 export const getUserRoles = async (userId: string) => {
   const supabase = createClient();
   const roles = new Set<string>();

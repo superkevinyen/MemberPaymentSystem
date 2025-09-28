@@ -1,14 +1,33 @@
-'use client';
 import { useEffect, useState } from 'react';
-export default function useCountdown(expires: string | null) {
-  const [left, setLeft] = useState<number>(0);
+
+export const useCountdown = (targetDate: string | null) => {
+  const countDownDate = targetDate ? new Date(targetDate).getTime() : null;
+
+  const [countDown, setCountDown] = useState(
+    countDownDate ? countDownDate - new Date().getTime() : 0
+  );
+
   useEffect(() => {
-    if (!expires) return;
-    const end = new Date(expires).getTime();
-    const tick = () => setLeft(Math.max(0, Math.floor((end - Date.now()) / 1000)));
-    tick();
-    const t = setInterval(tick, 1000);
-    return () => clearInterval(t);
-  }, [expires]);
-  return left;
-}
+    if (!countDownDate) {
+      setCountDown(0);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      const newCountDown = countDownDate - new Date().getTime();
+      setCountDown(newCountDown > 0 ? newCountDown : 0);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [countDownDate]);
+
+  const secondsLeft = Math.floor((countDown / 1000) % 60);
+  const minutesLeft = Math.floor((countDown / (1000 * 60)) % 60);
+
+  return { 
+    minutes: minutesLeft, 
+    seconds: secondsLeft, 
+    secondsLeft: Math.floor(countDown / 1000),
+    isExpired: countDown <= 0,
+  };
+};
