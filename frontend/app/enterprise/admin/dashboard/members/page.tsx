@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -21,54 +22,110 @@ import {
 import { MoreHorizontal } from "lucide-react";
 import { toast } from 'react-hot-toast';
 
-// Define the type for our user data based on the RPC return type
-type User = {
+// Define the type for our member data to match the RPC function return type
+type Member = {
   id: string;
-  email: string | null;
-  name: string | null;
-  is_admin: boolean | null;
-  created_at: string | null;
+  member_no: string;
+  name: string;
+  phone: string;
+  email: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
 };
 
 export default function MembersPage() {
   const supabase = createClient();
-  const [users, setUsers] = useState<User[]>([]);
+  const { user: currentUser, isAdmin, loading: authLoading } = useAuth();
+  const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
 
-  async function fetchUsers() {
+  async function fetchMembers() {
+    if (!currentUser || !isAdmin) {
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
-    const { data, error } = await supabase.rpc('get_all_users_for_admin');
-    if (error) {
-      toast.error('讀取使用者列表失敗: ' + error.message);
-      console.error(error);
-    } else {
-      setUsers(data || []);
+    try {
+      // 使用正確的 RPC 函數來獲取所有會員資料
+      const { data: membersData, error } = await supabase.rpc('get_all_member_profiles');
+      
+      if (error) {
+        console.error('RPC error:', error);
+        toast.error('讀取會員列表失敗: ' + error.message);
+        setMembers([]);
+      } else if (membersData) {
+        setMembers(membersData);
+      } else {
+        setMembers([]);
+      }
+    } catch (err) {
+      console.error('Fetch members error:', err);
+      toast.error('發生未知錯誤');
+      setMembers([]);
     }
     setLoading(false);
   }
 
   useEffect(() => {
-    fetchUsers();
-  }, []);
+    // 只有在認證完成且使用者是管理員時才載入資料
+    if (!authLoading && currentUser && isAdmin) {
+      fetchMembers();
+    } else if (!authLoading && (!currentUser || !isAdmin)) {
+      setLoading(false);
+    }
+  }, [authLoading, currentUser, isAdmin]);
 
-  const handleToggleAdmin = async (user_id: string, current_is_admin: boolean | null) => {
-    const newAdminStatus = !current_is_admin;
-    const { error } = await supabase.rpc('admin_update_user_metadata', {
-      p_user_id: user_id,
-      p_metadata: { is_admin: newAdminStatus }
-    });
+  const handleToggleMemberStatus = async (member_id: string, current_status: string) => {
+    const newStatus = current_status === 'active' ? 'inactive' : 'active';
+    
+    try {
+      const { error } = await supabase.rpc('admin_update_member_status', {
+        p_member_id: member_id,
+        p_status: newStatus
+      });
 
-    if (error) {
-      toast.error('更新管理員狀態失敗: ' + error.message);
-    } else {
-      toast.success(`使用者權限已更新為: ${newAdminStatus ? '管理員' : '普通用戶'}`);
-      fetchUsers(); // Refresh the list
+      if (error) {
+        console.error('Toggle member status error:', error);
+        toast.error('更新會員狀態失敗: ' + error.message);
+      } else {
+        toast.success(`會員狀態已更新為: ${newStatus === 'active' ? '啟用' : '停用'}`);
+        // 立即更新本地狀態，避免重新載入整個列表
+        setMembers(prevMembers =>
+          prevMembers.map(member =>
+            member.id === member_id
+              ? { ...member, status: newStatus }
+              : member
+          )
+        );
+      }
+    } catch (err) {
+      console.error('Toggle member status error:', err);
+      toast.error('更新會員狀態時發生未知錯誤');
     }
   };
 
 
-  if (loading) {
-    return <div>讀取中...</div>;
+  if (authLoading || loading) {
+    return (
+      <div className="container mx-auto py-10">
+        <div className="flex justify-center items-center h-64">
+          <div className="text-lg">讀取中...</div>
+        </div>
+      </div>
+    );
+  }
+
+  // 如果使用者未登入或不是管理員，顯示權限不足訊息
+  if (!currentUser || !isAdmin) {
+    return (
+      <div className="container mx-auto py-10">
+        <div className="flex justify-center items-center h-64">
+          <div className="text-lg text-red-600">權限不足：只有平台管理員可以訪問此頁面</div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -82,9 +139,11 @@ export default function MembersPage() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Email</TableHead>
+              <TableHead>會員號</TableHead>
               <TableHead>名稱</TableHead>
-              <TableHead>角色</TableHead>
+              <TableHead>Email</TableHead>
+              <TableHead>電話</TableHead>
+              <TableHead>狀態</TableHead>
               <TableHead>註冊時間</TableHead>
               <TableHead>
                 <span className="sr-only">操作</span>
@@ -92,17 +151,23 @@ export default function MembersPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {users.length > 0 ? (
-              users.map((user) => (
-                <TableRow key={user.id}>
-                  <TableCell className="font-medium">{user.email}</TableCell>
-                  <TableCell>{user.name || '-'}</TableCell>
+            {members.length > 0 ? (
+              members.map((member) => (
+                <TableRow key={member.id}>
+                  <TableCell className="font-medium">{member.member_no}</TableCell>
+                  <TableCell>{member.name || '-'}</TableCell>
+                  <TableCell>{member.email || '-'}</TableCell>
+                  <TableCell>{member.phone || '-'}</TableCell>
                   <TableCell>
-                    <span className={`px-2 py-1 rounded-full text-xs ${user.is_admin ? 'bg-blue-200 text-blue-800' : 'bg-gray-200 text-gray-800'}`}>
-                      {user.is_admin ? 'Admin' : 'Member'}
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                      member.status === 'active'
+                        ? 'bg-green-100 text-green-800 border border-green-200'
+                        : 'bg-red-100 text-red-800 border border-red-200'
+                    }`}>
+                      {member.status === 'active' ? '啟用' : '停用'}
                     </span>
                   </TableCell>
-                  <TableCell>{user.created_at ? new Date(user.created_at).toLocaleDateString() : '-'}</TableCell>
+                  <TableCell>{member.created_at ? new Date(member.created_at).toLocaleDateString() : '-'}</TableCell>
                   <TableCell>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -114,9 +179,10 @@ export default function MembersPage() {
                       <DropdownMenuContent align="end">
                         <DropdownMenuLabel>操作</DropdownMenuLabel>
                         <DropdownMenuItem
-                          onClick={() => handleToggleAdmin(user.id, user.is_admin)}
+                          onClick={() => handleToggleMemberStatus(member.id, member.status)}
+                          className="cursor-pointer"
                         >
-                          {user.is_admin ? '撤銷管理員' : '設為管理員'}
+                          {member.status === 'active' ? '停用會員' : '啟用會員'}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -125,8 +191,11 @@ export default function MembersPage() {
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center">
-                  沒有使用者。
+                <TableCell colSpan={7} className="h-24 text-center text-gray-500">
+                  <div className="flex flex-col items-center justify-center space-y-2">
+                    <div>目前沒有會員資料</div>
+                    <div className="text-sm">請檢查資料庫連線或聯絡系統管理員</div>
+                  </div>
                 </TableCell>
               </TableRow>
             )}

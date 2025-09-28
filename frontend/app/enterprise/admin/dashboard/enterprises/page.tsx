@@ -68,21 +68,26 @@ export default function EnterprisesPage() {
       return;
     }
 
-    const toastId = toast.loading('正在建立企業...');
-    const { error } = await supabase.rpc('create_company_with_password', {
-      company_name: companyName,
-      plain_password: password,
-    });
+    // 暫時禁用創建功能，直到 public wrapper 函數被創建
+    toast.error('創建企業功能暫時不可用，請聯絡系統管理員。');
+    return;
 
-    if (error) {
-      toast.error('建立企業失敗: ' + error.message, { id: toastId });
-    } else {
-      toast.success('企業已成功建立！', { id: toastId });
-      setCompanyName('');
-      setPassword('');
-      setIsDialogOpen(false);
-      fetchEnterprises(); // Refresh the list
-    }
+    // TODO: 需要創建 public.admin_create_enterprise_and_card wrapper 函數
+    // const toastId = toast.loading('正在建立企業...');
+    // const { data, error } = await supabase.rpc('admin_create_enterprise_and_card', {
+    //   p_company_name: companyName,
+    //   p_password: password,
+    // });
+
+    // if (error) {
+    //   toast.error('建立企業失敗: ' + error.message, { id: toastId });
+    // } else {
+    //   toast.success('企業已成功建立！', { id: toastId });
+    //   setCompanyName('');
+    //   setPassword('');
+    //   setIsDialogOpen(false);
+    //   fetchEnterprises(); // Refresh the list
+    // }
   };
 
   if (loading) {

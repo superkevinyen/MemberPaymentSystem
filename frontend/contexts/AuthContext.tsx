@@ -1,13 +1,15 @@
 "use client";
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { Session, User, AuthChangeEvent } from '@supabase/supabase-js';
+import { Session, User } from '@supabase/supabase-js';
+import { isPlatformAdmin, getUserRoles } from '@/lib/roles';
 
 type AuthContextType = {
   user: User | null;
   isAdmin: boolean;
+  roles: string[];
   loading: boolean;
 };
 
@@ -16,50 +18,38 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const supabase = createClient();
   const router = useRouter();
-  const pathname = usePathname();
   const [user, setUser] = useState<User | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [roles, setRoles] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const checkUser = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+    const processSession = async (session: Session | null) => {
       const currentUser = session?.user ?? null;
       setUser(currentUser);
 
       let adminStatus = false;
+      let userRoles: string[] = [];
+
       if (currentUser) {
-        const { data, error } = await supabase.rpc('is_admin');
-        if (error) {
-          console.error('Error checking admin status:', error);
-        } else {
-          adminStatus = data;
+        try {
+          adminStatus = await isPlatformAdmin(currentUser.id);
+          userRoles = await getUserRoles(currentUser.id);
+        } catch (error) {
+          console.error('Error checking admin status or getting roles:', error);
         }
       }
+      
       setIsAdmin(adminStatus);
+      setRoles(userRoles);
       setLoading(false);
+      
+      return { adminStatus };
     };
-
-    checkUser();
 
     const { data: authListener } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        const currentUser = session?.user ?? null;
-        setUser(currentUser);
-
-        let adminStatus = false;
-        if (currentUser) {
-          const { data, error } = await supabase.rpc('is_admin');
-          if (error) {
-            console.error('Error checking admin status:', error);
-          } else {
-            adminStatus = data;
-          }
-        }
-        setIsAdmin(adminStatus);
-        setLoading(false);
+        const { adminStatus } = await processSession(session);
 
         if (event === 'SIGNED_IN') {
           if (adminStatus) {
@@ -73,12 +63,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       }
     );
 
+    // Initial check
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      processSession(session);
+    });
+
     return () => {
       authListener.subscription.unsubscribe();
     };
   }, [supabase, router]);
 
-  const value = { user, isAdmin, loading };
+  const value = { user, isAdmin, roles, loading };
 
   return (
     <AuthContext.Provider value={value}>

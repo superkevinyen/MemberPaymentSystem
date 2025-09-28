@@ -20,13 +20,6 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      admin_update_user_metadata: {
-        Args: {
-          p_user_id: string
-          p_metadata: Json
-        }
-        Returns: boolean
-      }
       adjust_member_balance: {
         Args: {
           adjustment_amount: number
@@ -40,6 +33,14 @@ export type Database = {
           success: boolean
           transaction_id: string
         }[]
+      }
+      admin_update_user_metadata: {
+        Args: { p_metadata: Json; p_user_id: string }
+        Returns: boolean
+      }
+      admin_update_member_status: {
+        Args: { p_member_id: string; p_status: Database["public"]["Enums"]["member_status"] }
+        Returns: boolean
       }
       calculate_member_discount: {
         Args: { member_uuid: string }
@@ -92,22 +93,6 @@ export type Database = {
           new_balance: number
           success: boolean
           transaction_id: string
-        }[]
-      }
-      create_company_with_password: {
-        Args: {
-          company_name: string
-          company_status?: string
-          contact_email?: string
-          contact_phone?: string
-          discount_rate?: number
-          plain_password?: string
-        }
-        Returns: {
-          company_code: string
-          company_id: string
-          error_message: string
-          success: boolean
         }[]
       }
       create_member_session: {
@@ -178,24 +163,27 @@ export type Database = {
       get_all_enterprises_for_admin: {
         Args: Record<PropertyKey, never>
         Returns: {
-          balance: number
+          id: string
+          company_name: string
           card_id: string
           card_no: string
-          card_status: Database["public"]["Enums"]["card_status"]
-          company_name: string
-          created_at: string
+          balance: number
           fixed_discount: number
-          id: string
+          card_status: Database["public"]["Enums"]["card_status"]
+          created_at: string
         }[]
       }
-      get_all_users_for_admin: {
+      get_all_member_profiles: {
         Args: Record<PropertyKey, never>
         Returns: {
-          created_at: string
-          email: string
           id: string
-          is_admin: boolean
+          member_no: string
           name: string
+          phone: string
+          email: string
+          status: Database["public"]["Enums"]["member_status"]
+          created_at: string
+          updated_at: string
         }[]
       }
       get_member_refund_history: {
@@ -239,8 +227,16 @@ export type Database = {
           updated_at: string
         }[]
       }
+      get_user_role: {
+        Args: { p_user_id: string }
+        Returns: string[]
+      }
       is_admin: {
         Args: Record<PropertyKey, never>
+        Returns: boolean
+      }
+      is_platform_admin: {
+        Args: { p_user_id: string }
         Returns: boolean
       }
       log_qr_code_usage: {
@@ -420,6 +416,20 @@ export type Database = {
           member_id: string
         }[]
       }
+      authenticate_by_member_no: {
+        Args: { p_member_no: string }
+        Returns: {
+          email: string
+          user_id: string
+        }[]
+      }
+      authenticate_by_phone: {
+        Args: { p_phone: string }
+        Returns: {
+          email: string
+          user_id: string
+        }[]
+      }
     }
     Enums: {
       audit_action:
@@ -438,8 +448,8 @@ export type Database = {
         | "recharge"
         | "payment"
         | "other"
-      card_status: "active" | "inactive" | "suspended" | "expired" | "deleted"
-      card_type: "member" | "enterprise"
+      card_status: "active" | "inactive" | "lost" | "expired"
+      card_type: "personal" | "enterprise"
       change_type: "earned" | "used" | "expired" | "manual_adjust"
       compensation_status:
         | "pending"
@@ -628,8 +638,8 @@ export const Constants = {
         "payment",
         "other",
       ],
-      card_status: ["active", "inactive", "suspended", "expired", "deleted"],
-      card_type: ["member", "enterprise"],
+      card_status: ["active", "inactive", "lost", "expired"],
+      card_type: ["personal", "enterprise"],
       change_type: ["earned", "used", "expired", "manual_adjust"],
       compensation_status: [
         "pending",
