@@ -1059,6 +1059,42 @@ create policy pl_user_read on app.point_ledger
 
 -- ⚠️ No INSERT/UPDATE/DELETE policies for money-moving tables.
 -- All writes occur only via SECURITY DEFINER RPCs above.
+-- 15) RPCs for alternate logins
+create or replace function app.authenticate_by_member_no(p_member_no text)
+returns table(email text, user_id uuid) language plpgsql security definer as $$
+begin
+  perform sec.fixed_search_path();
+  return query
+    select u.email, mp.id from app.member_profiles mp
+    join auth.users u on u.id = mp.id
+    where mp.member_no = p_member_no and mp.status = 'active';
+end;
+$$;
+
+create or replace function app.authenticate_by_phone(p_phone text)
+returns table(email text, user_id uuid) language plpgsql security definer as $$
+begin
+  perform sec.fixed_search_path();
+  return query
+    select u.email, mp.id from app.member_profiles mp
+    join auth.users u on u.id = mp.id
+    where mp.phone = p_phone and mp.status = 'active';
+end;
+$$;
 -- ============================================================================
 -- END
 -- ============================================================================
+
+-- ============================================================================
+-- 16) Handle new user function
+-- ============================================================================
+create function public.handle_new_user(user_id uuid, user_name text, user_email text)
+returns void
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  insert into public.member_profiles (id, name, email)
+  values (user_id, user_name, user_email);
+end;
+$$;
