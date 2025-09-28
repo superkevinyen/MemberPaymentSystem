@@ -96,11 +96,11 @@ export default function MembersPage() {
     }
 
     const toastId = toast.loading('正在建立會員...');
-    const { data, error } = await supabase.rpc('admin_create_user', {
-      p_email: newEmail,
-      p_password: newPassword,
+    const { data, error } = await supabase.rpc('admin_create_member', {
       p_name: newName,
+      p_email: newEmail,
       p_phone: newPhone,
+      p_password: newPassword,
     });
 
     if (error) {

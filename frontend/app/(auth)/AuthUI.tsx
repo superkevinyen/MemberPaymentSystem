@@ -2,7 +2,7 @@
 
 import { useState, FormEvent } from 'react';
 // import { useRouter } from 'next/navigation'; // Currently unused
-import { createClient } from '@/lib/supabase/client-browser';
+import { createClient } from '@/lib/supabase/client';
 import { toast } from 'react-hot-toast';
 import Link from 'next/link';
 // import { getUserRoles } from '@/lib/roles'; // Currently unused
@@ -37,6 +37,9 @@ export default function AuthPage({ mode: initialMode }: { mode: 'login' | 'signu
         password,
         options: {
           emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback`,
+          data: {
+            name: name,
+          },
         },
       });
 

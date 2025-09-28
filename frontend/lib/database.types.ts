@@ -15,6 +15,15 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      admin_create_member: {
+        Args: {
+          p_name: string
+          p_email: string
+          p_phone: string
+          p_password: string
+        }
+        Returns: string
+      }
       admin_create_user: {
         Args: {
           p_email: string
@@ -64,6 +73,7 @@ export type Database = {
           name: string
           phone: string
           email: string
+          password_hash: string
           status: Database["public"]["Enums"]["member_status"]
           created_at: string
           updated_at: string
@@ -185,6 +195,10 @@ export type Database = {
         Args: Record<PropertyKey, never>
         Returns: boolean
       }
+      get_user_type: {
+        Args: Record<PropertyKey, never>
+        Returns: string
+      }
       admin_create_merchant: {
         Args: {
           p_code: string
@@ -283,7 +297,6 @@ export type Database = {
           discount: number
           is_active: boolean
           created_at: string
-          updated_at: string
         }[]
       }
       user_update_profile: {
