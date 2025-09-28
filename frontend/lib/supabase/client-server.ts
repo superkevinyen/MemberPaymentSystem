@@ -4,12 +4,10 @@ import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import type { NextRequest, NextResponse } from 'next/server';
 
 /** ① Server Components / SSR：只读 cookie */
-export function supabaseServer() {
+export function createClient(store: ReturnType<typeof cookies>) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
   if (!url || !anon) throw new Error('Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY');
-
-  const store = cookies();
 
   return createServerClient(url, anon, {
     cookies: {

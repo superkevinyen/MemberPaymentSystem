@@ -263,3 +263,6 @@ secrets.json
 
 # Project specific
 # Add any project-specific files or directories you want to ignore here
+
+# YoYo AI version control directory
+.yoyo/
