@@ -7,11 +7,6 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
-  __InternalSupabase: {
-    PostgrestVersion: "13.0.5"
-  }
   public: {
     Tables: {
       [_ in never]: never
@@ -20,158 +15,46 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      adjust_member_balance: {
+      admin_create_user: {
         Args: {
-          adjustment_amount: number
-          adjustment_type: string
-          member_uuid: string
-          reason?: string
+          p_email: string
+          p_password: string
+          p_name: string
+          p_phone: string
         }
-        Returns: {
-          error_message: string
-          new_balance: number
-          success: boolean
-          transaction_id: string
-        }[]
+        Returns: string
       }
-      admin_update_user_metadata: {
-        Args: { p_metadata: Json; p_user_id: string }
+      admin_create_enterprise_and_card: {
+        Args: {
+          p_company_name: string
+          p_password: string
+          p_initial_balance?: number
+          p_fixed_discount?: number
+        }
+        Returns: string
+      }
+      admin_update_enterprise_card_details: {
+        Args: {
+          p_card_id: string
+          p_company_name: string
+          p_fixed_discount: number
+        }
         Returns: boolean
       }
-      admin_update_member_status: {
-        Args: { p_member_id: string; p_status: Database["public"]["Enums"]["member_status"] }
+      admin_update_enterprise_card_status: {
+        Args: {
+          p_card_id: string
+          p_status: Database["public"]["Enums"]["card_status"]
+        }
         Returns: boolean
       }
-      calculate_member_discount: {
-        Args: { member_uuid: string }
-        Returns: {
-          discount_rate: number
-          discount_source: string
-        }[]
-      }
-      cleanup_expired_qr_codes: {
-        Args: Record<PropertyKey, never>
-        Returns: number
-      }
-      cleanup_expired_sessions: {
-        Args: Record<PropertyKey, never>
-        Returns: number
-      }
-      cleanup_test_data: {
-        Args: Record<PropertyKey, never>
-        Returns: {
-          deleted_companies: number
-          deleted_members: number
-          deleted_transactions: number
-          reset_refunds: number
-        }[]
-      }
-      company_bind_member: {
-        Args: { company_uuid: string; member_uuid: string }
-        Returns: {
-          message: string
-          success: boolean
-        }[]
-      }
-      company_unbind_member: {
-        Args: { company_uuid: string; member_uuid: string }
-        Returns: {
-          message: string
-          success: boolean
-        }[]
-      }
-      consume_member_balance: {
+      admin_update_member_profile: {
         Args: {
-          consume_amount: number
-          description?: string
-          member_uuid: string
+          p_member_id: string
+          p_name: string
+          p_phone: string
         }
-        Returns: {
-          actual_amount: number
-          discount_amount: number
-          error_message: string
-          new_balance: number
-          success: boolean
-          transaction_id: string
-        }[]
-      }
-      create_member_session: {
-        Args: { login_type_input: string; member_uuid: string }
-        Returns: {
-          expires_at: string
-          session_token: string
-        }[]
-      }
-      create_member_with_password: {
-        Args: {
-          discount_rate?: number
-          initial_balance?: number
-          member_email?: string
-          member_name: string
-          member_phone?: string
-          member_status?: string
-          plain_password?: string
-        }
-        Returns: {
-          error_message: string
-          member_code: string
-          member_id: string
-          success: boolean
-        }[]
-      }
-      freeze_member_balance: {
-        Args: { freeze_amount: number; member_uuid: string; reason?: string }
-        Returns: {
-          available_balance: number
-          error_message: string
-          new_frozen_amount: number
-          success: boolean
-        }[]
-      }
-      generate_card_transaction_no: {
-        Args: { transaction_type: string }
-        Returns: string
-      }
-      generate_dynamic_qr_code: {
-        Args: { card_uuid: string }
-        Returns: string
-      }
-      generate_member_transaction_no: {
-        Args: { transaction_type: string }
-        Returns: string
-      }
-      generate_next_card_code: {
-        Args: Record<PropertyKey, never>
-        Returns: string
-      }
-      generate_next_company_code: {
-        Args: Record<PropertyKey, never>
-        Returns: string
-      }
-      generate_next_member_code: {
-        Args: Record<PropertyKey, never>
-        Returns: string
-      }
-      generate_transaction_no: {
-        Args: { transaction_type: string }
-        Returns: string
-      }
-      generate_unique_qr_code: {
-        Args: Record<PropertyKey, never>
-        Returns: string
-      }
-      get_all_enterprises_for_admin: {
-        Args: Record<PropertyKey, never>
-        Returns: {
-          id: string
-          company_name: string
-          card_id: string
-          card_no: string
-          balance: number
-          fixed_discount: number
-          card_status: Database["public"]["Enums"]["card_status"]
-          created_at: string
-        }[]
+        Returns: boolean
       }
       get_all_member_profiles: {
         Args: Record<PropertyKey, never>
@@ -186,31 +69,84 @@ export type Database = {
           updated_at: string
         }[]
       }
-      get_member_refund_history: {
-        Args: {
-          limit_count?: number
-          member_uuid: string
-          offset_count?: number
-        }
+      get_all_enterprises_for_admin: {
+        Args: Record<PropertyKey, never>
         Returns: {
-          original_amount: number
-          original_date: string
-          original_transaction_no: string
-          refund_amount: number
-          refund_date: string
-          refund_reason: string
-          refund_transaction_id: string
-          refund_transaction_no: string
+          id: string
+          company_name: string
+          card_id: string
+          card_no: string
+          balance: number
+          fixed_discount: number
+          card_status: Database["public"]["Enums"]["card_status"]
+          created_at: string
         }[]
       }
-      get_qr_code_stats: {
-        Args: { end_date?: string; start_date?: string }
+      admin_update_user_metadata: {
+        Args: {
+          p_user_id: string
+          p_metadata: Json
+        }
+        Returns: boolean
+      }
+      admin_update_member_status: {
+        Args: {
+          p_member_id: string
+          p_status: Database["public"]["Enums"]["member_status"]
+        }
+        Returns: boolean
+      }
+      merchant_charge_by_qr: {
+        Args: {
+          p_merchant_code: string
+          p_qr_plain: string
+          p_raw_price: number
+          p_reason?: string
+          p_tag?: Json
+          p_idempotency_key?: string
+          p_external_order_id?: string
+        }
         Returns: {
-          expired_validations: number
-          failed_validations: number
-          successful_validations: number
-          total_generated: number
-          total_validated: number
+          tx_id: string
+          tx_no: string
+          card_type: Database["public"]["Enums"]["card_type"]
+          card_id: string
+          final_amount: number
+          discount: number
+        }[]
+      }
+      merchant_refund_tx: {
+        Args: {
+          p_merchant_code: string
+          p_original_tx_no: string
+          p_refund_amount: number
+          p_reason?: string
+          p_tag?: Json
+        }
+        Returns: {
+          refund_tx_id: string
+          refund_tx_no: string
+          refunded_amount: number
+        }[]
+      }
+      get_transactions: {
+        Args: {
+          p_limit?: number
+          p_offset?: number
+          p_start_date?: string
+          p_end_date?: string
+        }
+        Returns: {
+          id: string
+          tx_no: string
+          card_type: Database["public"]["Enums"]["card_type"]
+          card_id: string
+          merchant_id: string
+          tx_type: Database["public"]["Enums"]["tx_type"]
+          final_amount: number
+          status: Database["public"]["Enums"]["tx_status"]
+          created_at: string
+          total_count: number
         }[]
       }
       get_user_cards: {
@@ -227,273 +163,232 @@ export type Database = {
           updated_at: string
         }[]
       }
-      get_user_role: {
-        Args: { p_user_id: string }
-        Returns: string[]
-      }
-      is_admin: {
-        Args: Record<PropertyKey, never>
-        Returns: boolean
-      }
-      is_platform_admin: {
-        Args: { p_user_id: string }
-        Returns: boolean
-      }
-      log_qr_code_usage: {
-        Args: {
-          action_input: string
-          error_msg?: string
-          ip_addr?: string
-          member_uuid: string
-          qr_code_input: string
-          result_input?: string
-          user_agent_input?: string
-        }
-        Returns: undefined
-      }
-      process_refund: {
-        Args: {
-          original_transaction_no: string
-          refund_amount: number
-          refund_reason?: string
-        }
-        Returns: {
-          error_message: string
-          new_balance: number
-          refund_transaction_id: string
-          refundable_remaining: number
-          success: boolean
-        }[]
-      }
-      recharge_member_balance: {
-        Args: {
-          description?: string
-          member_uuid: string
-          payment_method?: string
-          recharge_amount: number
-        }
-        Returns: {
-          error_message: string
-          new_balance: number
-          success: boolean
-          transaction_id: string
-        }[]
-      }
-      refresh_card_qr_code: {
-        Args: { card_uuid: string }
-        Returns: string
-      }
-      refresh_member_qr_code: {
-        Args: { member_uuid: string }
-        Returns: string
-      }
-      reset_all_test_refund_status: {
-        Args: Record<PropertyKey, never>
-        Returns: {
-          message: string
-          reset_count: number
-        }[]
-      }
-      reset_transaction_refund_status: {
-        Args: { transaction_no_input: string }
-        Returns: {
-          message: string
-          success: boolean
-        }[]
-      }
-      reset_weekly_password_verification: {
-        Args: Record<PropertyKey, never>
-        Returns: number
-      }
-      set_card_password: {
-        Args: { card_uuid: string; new_password: string }
-        Returns: boolean
-      }
-      set_company_password: {
-        Args: { company_uuid: string; new_password: string }
-        Returns: {
-          error_message: string
-          success: boolean
-        }[]
-      }
-      set_member_password: {
-        Args: { member_uuid: string; new_password: string }
-        Returns: {
-          error_message: string
-          success: boolean
-        }[]
-      }
-      unfreeze_member_balance: {
-        Args: { member_uuid: string; reason?: string; unfreeze_amount: number }
-        Returns: {
-          available_balance: number
-          error_message: string
-          new_frozen_amount: number
-          success: boolean
-        }[]
-      }
-      update_company_info: {
-        Args: {
-          company_uuid: string
-          new_discount_rate?: number
-          new_email?: string
-          new_name?: string
-          new_phone?: string
-        }
-        Returns: {
-          error_message: string
-          success: boolean
-        }[]
-      }
-      update_member_info: {
-        Args: {
-          member_uuid: string
-          new_discount_rate?: number
-          new_email?: string
-          new_name?: string
-          new_phone?: string
-        }
-        Returns: {
-          error_message: string
-          success: boolean
-        }[]
-      }
-      validate_member_session: {
-        Args: { session_token_input: string }
-        Returns: {
-          error_message: string
-          is_valid: boolean
-          login_type: string
-          member_id: string
-          needs_password_reauth: boolean
-        }[]
-      }
-      validate_qr_code: {
-        Args: { qr_code_input: string }
-        Returns: {
-          error_message: string
-          expires_at: string
-          is_valid: boolean
-          member_code: string
-          member_id: string
-        }[]
-      }
-      validate_refund_eligibility: {
-        Args: { original_transaction_no: string }
-        Returns: {
-          error_message: string
-          is_eligible: boolean
-          original_amount: number
-          refundable_amount: number
-          refunded_amount: number
-          transaction_date: string
-        }[]
-      }
-      verify_card_password: {
-        Args: { card_code_input: string; password_input: string }
-        Returns: {
-          card_code: string
-          card_id: string
-          error_message: string
-          is_valid: boolean
-        }[]
-      }
-      verify_company_password: {
-        Args: { company_code_input: string; password_input: string }
-        Returns: {
-          company_id: string
-          company_name: string
-          error_message: string
-          is_valid: boolean
-        }[]
-      }
-      verify_member_password: {
-        Args: { member_code_input: string; password_input: string }
-        Returns: {
-          error_message: string
-          is_valid: boolean
-          member_code: string
-          member_id: string
-        }[]
-      }
       authenticate_by_member_no: {
-        Args: { p_member_no: string }
+        Args: {
+          p_member_no: string
+        }
         Returns: {
           email: string
           user_id: string
         }[]
       }
       authenticate_by_phone: {
-        Args: { p_phone: string }
+        Args: {
+          p_phone: string
+        }
         Returns: {
           email: string
           user_id: string
         }[]
       }
+      is_admin: {
+        Args: Record<PropertyKey, never>
+        Returns: boolean
+      }
+      admin_create_merchant: {
+        Args: {
+          p_code: string
+          p_name: string
+          p_description?: string
+        }
+        Returns: string
+      }
+      admin_update_merchant: {
+        Args: {
+          p_merchant_id: string
+          p_name: string
+          p_description?: string
+          p_active?: boolean
+        }
+        Returns: boolean
+      }
+      admin_get_merchants: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          id: string
+          code: string
+          name: string
+          description: string
+          active: boolean
+          created_at: string
+          updated_at: string
+        }[]
+      }
+      admin_add_merchant_user: {
+        Args: {
+          p_merchant_id: string
+          p_user_id: string
+        }
+        Returns: boolean
+      }
+      admin_remove_merchant_user: {
+        Args: {
+          p_merchant_id: string
+          p_user_id: string
+        }
+        Returns: boolean
+      }
+      admin_adjust_personal_card_balance: {
+        Args: {
+          p_card_id: string
+          p_amount: number
+          p_reason?: string
+        }
+        Returns: boolean
+      }
+      admin_adjust_personal_card_points: {
+        Args: {
+          p_card_id: string
+          p_points: number
+          p_reason?: string
+        }
+        Returns: boolean
+      }
+      admin_update_personal_card_status: {
+        Args: {
+          p_card_id: string
+          p_status: Database["public"]["Enums"]["card_status"]
+        }
+        Returns: boolean
+      }
+      admin_create_membership_level: {
+        Args: {
+          p_level: number
+          p_name: string
+          p_min_points: number
+          p_max_points?: number
+          p_discount?: number
+        }
+        Returns: string
+      }
+      admin_update_membership_level: {
+        Args: {
+          p_level_id: string
+          p_name: string
+          p_min_points: number
+          p_max_points?: number
+          p_discount?: number
+          p_is_active?: boolean
+        }
+        Returns: boolean
+      }
+      admin_get_membership_levels: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          id: string
+          level: number
+          name: string
+          min_points: number
+          max_points: number | null
+          discount: number
+          is_active: boolean
+          created_at: string
+          updated_at: string
+        }[]
+      }
+      user_update_profile: {
+        Args: {
+          p_name: string
+          p_phone: string
+        }
+        Returns: boolean
+      }
+      enterprise_get_bound_members: {
+        Args: {
+          p_card_no: string
+        }
+        Returns: {
+          member_id: string
+          member_no: string
+          name: string
+          phone: string
+          role: Database["public"]["Enums"]["bind_role"]
+          created_at: string
+        }[]
+      }
+      enterprise_update_card_password: {
+        Args: {
+          p_card_no: string
+          p_old_password: string
+          p_new_password: string
+        }
+        Returns: boolean
+      }
+      user_recharge_personal_card: {
+        Args: {
+          p_personal_card_id: string
+          p_amount: number
+          p_payment_method?: Database["public"]["Enums"]["pay_method"]
+          p_reason?: string
+          p_tag?: Json
+          p_idempotency_key?: string
+          p_external_order_id?: string
+        }
+        Returns: {
+          tx_id: string
+          tx_no: string
+          card_id: string
+          amount: number
+        }[]
+      }
+      user_recharge_enterprise_card_admin: {
+        Args: {
+          p_enterprise_card_id: string
+          p_amount: number
+          p_payment_method?: Database["public"]["Enums"]["pay_method"]
+          p_reason?: string
+          p_tag?: Json
+          p_idempotency_key?: string
+          p_external_order_id?: string
+        }
+        Returns: {
+          tx_id: string
+          tx_no: string
+          card_id: string
+          amount: number
+        }[]
+      }
+      rotate_card_qr: {
+        Args: {
+          p_card_id: string
+          p_card_type: Database["public"]["Enums"]["card_type"]
+        }
+        Returns: {
+          qr_plain: string
+          qr_expires_at: string
+        }[]
+      }
+      enterprise_set_initial_admin: {
+        Args: {
+          p_card_no: string
+          p_member_no: string
+        }
+        Returns: boolean
+      }
+      enterprise_add_member: {
+        Args: {
+          p_card_no: string
+          p_member_no: string
+          p_card_password: string
+        }
+        Returns: boolean
+      }
+      enterprise_remove_member: {
+        Args: {
+          p_card_no: string
+          p_member_no: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
-      audit_action:
-        | "create"
-        | "update"
-        | "delete"
-        | "login"
-        | "logout"
-        | "view"
-        | "export"
-        | "import"
-        | "approve"
-        | "reject"
-        | "cancel"
-        | "refund"
-        | "recharge"
-        | "payment"
-        | "other"
-      card_status: "active" | "inactive" | "lost" | "expired"
       card_type: "personal" | "enterprise"
-      change_type: "earned" | "used" | "expired" | "manual_adjust"
-      compensation_status:
-        | "pending"
-        | "processing"
-        | "completed"
-        | "failed"
-        | "cancelled"
-      compensation_type: "retry" | "rollback" | "manual" | "auto_compensate"
-      lock_type: "balance" | "transaction" | "binding" | "qr_verification"
+      tx_type: "payment" | "refund" | "recharge"
+      tx_status: "processing" | "completed" | "failed" | "cancelled" | "refunded"
+      pay_method: "balance" | "cash" | "wechat" | "alipay"
+      bind_role: "admin" | "member"
       member_status: "active" | "inactive" | "suspended" | "deleted"
-      payment_method:
-        | "balance"
-        | "wechat"
-        | "alipay"
-        | "cash"
-        | "card"
-        | "other"
-      reconciliation_status:
-        | "pending"
-        | "matched"
-        | "mismatched"
-        | "manual_review"
-        | "completed"
-      refund_method: "original" | "balance" | "cash" | "bank_transfer"
-      request_status:
-        | "pending"
-        | "approved"
-        | "rejected"
-        | "completed"
-        | "cancelled"
-      transaction_status:
-        | "pending"
-        | "processing"
-        | "completed"
-        | "failed"
-        | "cancelled"
-        | "refunded"
-      transaction_type:
-        | "payment"
-        | "refund"
-        | "recharge"
-        | "transfer"
-        | "adjustment"
-      verification_type: "payment" | "binding" | "login" | "verification"
+      card_status: "active" | "inactive" | "lost" | "expired"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -501,33 +396,27 @@ export type Database = {
   }
 }
 
-type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
-
-type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
+type PublicSchema = Database[keyof Database & "public"]
 
 export type Tables<
-  DefaultSchemaTableNameOrOptions extends
-    | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
-    | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
-  }
-    ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
-        DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
+  PublicTableNameOrOptions extends
+    | keyof (PublicSchema["Tables"] & PublicSchema["Views"])
+    | { schema: keyof Database },
+  TableName extends PublicTableNameOrOptions extends { schema: keyof Database }
+    ? keyof (Database[PublicTableNameOrOptions["schema"]]["Tables"] &
+        Database[PublicTableNameOrOptions["schema"]]["Views"])
     : never = never,
-> = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
-}
-  ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
-      DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
+> = PublicTableNameOrOptions extends { schema: keyof Database }
+  ? (Database[PublicTableNameOrOptions["schema"]]["Tables"] &
+      Database[PublicTableNameOrOptions["schema"]]["Views"])[TableName] extends {
       Row: infer R
     }
     ? R
     : never
-  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] &
-        DefaultSchema["Views"])
-    ? (DefaultSchema["Tables"] &
-        DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
+  : PublicTableNameOrOptions extends keyof (PublicSchema["Tables"] &
+        PublicSchema["Views"])
+    ? (PublicSchema["Tables"] &
+        PublicSchema["Views"])[PublicTableNameOrOptions] extends {
         Row: infer R
       }
       ? R
@@ -535,24 +424,20 @@ export type Tables<
     : never
 
 export type TablesInsert<
-  DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema["Tables"]
-    | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
-  }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+  PublicTableNameOrOptions extends
+    | keyof PublicSchema["Tables"]
+    | { schema: keyof Database },
+  TableName extends PublicTableNameOrOptions extends { schema: keyof Database }
+    ? keyof Database[PublicTableNameOrOptions["schema"]]["Tables"]
     : never = never,
-> = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
-}
-  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+> = PublicTableNameOrOptions extends { schema: keyof Database }
+  ? Database[PublicTableNameOrOptions["schema"]]["Tables"][TableName] extends {
       Insert: infer I
     }
     ? I
     : never
-  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
-    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+  : PublicTableNameOrOptions extends keyof PublicSchema["Tables"]
+    ? PublicSchema["Tables"][PublicTableNameOrOptions] extends {
         Insert: infer I
       }
       ? I
@@ -560,24 +445,20 @@ export type TablesInsert<
     : never
 
 export type TablesUpdate<
-  DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema["Tables"]
-    | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
-  }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+  PublicTableNameOrOptions extends
+    | keyof PublicSchema["Tables"]
+    | { schema: keyof Database },
+  TableName extends PublicTableNameOrOptions extends { schema: keyof Database }
+    ? keyof Database[PublicTableNameOrOptions["schema"]]["Tables"]
     : never = never,
-> = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
-}
-  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+> = PublicTableNameOrOptions extends { schema: keyof Database }
+  ? Database[PublicTableNameOrOptions["schema"]]["Tables"][TableName] extends {
       Update: infer U
     }
     ? U
     : never
-  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
-    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+  : PublicTableNameOrOptions extends keyof PublicSchema["Tables"]
+    ? PublicSchema["Tables"][PublicTableNameOrOptions] extends {
         Update: infer U
       }
       ? U
@@ -585,104 +466,29 @@ export type TablesUpdate<
     : never
 
 export type Enums<
-  DefaultSchemaEnumNameOrOptions extends
-    | keyof DefaultSchema["Enums"]
-    | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
-  }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
+  PublicEnumNameOrOptions extends
+    | keyof PublicSchema["Enums"]
+    | { schema: keyof Database },
+  EnumName extends PublicEnumNameOrOptions extends { schema: keyof Database }
+    ? keyof Database[PublicEnumNameOrOptions["schema"]]["Enums"]
     : never = never,
-> = DefaultSchemaEnumNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
-}
-  ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
-  : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
-    ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
+> = PublicEnumNameOrOptions extends { schema: keyof Database }
+  ? Database[PublicEnumNameOrOptions["schema"]]["Enums"][EnumName]
+  : PublicEnumNameOrOptions extends keyof PublicSchema["Enums"]
+    ? PublicSchema["Enums"][PublicEnumNameOrOptions]
     : never
 
 export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
-    | keyof DefaultSchema["CompositeTypes"]
-    | { schema: keyof DatabaseWithoutInternals },
+    | keyof PublicSchema["CompositeTypes"]
+    | { schema: keyof Database },
   CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
+    schema: keyof Database
   }
-    ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
+    ? keyof Database[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
     : never = never,
-> = PublicCompositeTypeNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
-}
-  ? DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
-  : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
-    ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
+> = PublicCompositeTypeNameOrOptions extends { schema: keyof Database }
+  ? Database[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
+  : PublicCompositeTypeNameOrOptions extends keyof PublicSchema["CompositeTypes"]
+    ? PublicSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
     : never
-
-export const Constants = {
-  public: {
-    Enums: {
-      audit_action: [
-        "create",
-        "update",
-        "delete",
-        "login",
-        "logout",
-        "view",
-        "export",
-        "import",
-        "approve",
-        "reject",
-        "cancel",
-        "refund",
-        "recharge",
-        "payment",
-        "other",
-      ],
-      card_status: ["active", "inactive", "lost", "expired"],
-      card_type: ["personal", "enterprise"],
-      change_type: ["earned", "used", "expired", "manual_adjust"],
-      compensation_status: [
-        "pending",
-        "processing",
-        "completed",
-        "failed",
-        "cancelled",
-      ],
-      compensation_type: ["retry", "rollback", "manual", "auto_compensate"],
-      lock_type: ["balance", "transaction", "binding", "qr_verification"],
-      member_status: ["active", "inactive", "suspended", "deleted"],
-      payment_method: ["balance", "wechat", "alipay", "cash", "card", "other"],
-      reconciliation_status: [
-        "pending",
-        "matched",
-        "mismatched",
-        "manual_review",
-        "completed",
-      ],
-      refund_method: ["original", "balance", "cash", "bank_transfer"],
-      request_status: [
-        "pending",
-        "approved",
-        "rejected",
-        "completed",
-        "cancelled",
-      ],
-      transaction_status: [
-        "pending",
-        "processing",
-        "completed",
-        "failed",
-        "cancelled",
-        "refunded",
-      ],
-      transaction_type: [
-        "payment",
-        "refund",
-        "recharge",
-        "transfer",
-        "adjustment",
-      ],
-      verification_type: ["payment", "binding", "login", "verification"],
-    },
-  },
-} as const

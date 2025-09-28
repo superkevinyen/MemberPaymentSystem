@@ -19,10 +19,20 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { MoreHorizontal } from "lucide-react";
 import { toast } from 'react-hot-toast';
 
-// Define the type for our member data to match the RPC function return type
 type Member = {
   id: string;
   member_no: string;
@@ -40,6 +50,19 @@ export default function MembersPage() {
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // State for the 'Create' dialog
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [newEmail, setNewEmail] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newName, setNewName] = useState('');
+  const [newPhone, setNewPhone] = useState('');
+
+  // State for the 'Edit' dialog
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [selectedMember, setSelectedMember] = useState<Member | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+
   async function fetchMembers() {
     if (!currentUser || !isAdmin) {
       setLoading(false);
@@ -47,93 +70,139 @@ export default function MembersPage() {
     }
 
     setLoading(true);
-    try {
-      // 使用正確的 RPC 函數來獲取所有會員資料
-      const { data: membersData, error } = await supabase.rpc('get_all_member_profiles');
-      
-      if (error) {
-        console.error('RPC error:', error);
-        toast.error('讀取會員列表失敗: ' + error.message);
-        setMembers([]);
-      } else if (membersData) {
-        setMembers(membersData);
-      } else {
-        setMembers([]);
-      }
-    } catch (err) {
-      console.error('Fetch members error:', err);
-      toast.error('發生未知錯誤');
+    const { data: membersData, error } = await supabase.rpc('get_all_member_profiles');
+    
+    if (error) {
+      toast.error('讀取會員列表失敗: ' + error.message);
       setMembers([]);
+    } else {
+      setMembers(membersData || []);
     }
     setLoading(false);
   }
 
   useEffect(() => {
-    // 只有在認證完成且使用者是管理員時才載入資料
     if (!authLoading && currentUser && isAdmin) {
       fetchMembers();
-    } else if (!authLoading && (!currentUser || !isAdmin)) {
+    } else if (!authLoading) {
       setLoading(false);
     }
   }, [authLoading, currentUser, isAdmin]);
 
-  const handleToggleMemberStatus = async (member_id: string, current_status: string) => {
-    const newStatus = current_status === 'active' ? 'inactive' : 'active';
-    
-    try {
-      const { error } = await supabase.rpc('admin_update_member_status', {
-        p_member_id: member_id,
-        p_status: newStatus
-      });
+  const handleCreateMember = async () => {
+    if (!newEmail || !newPassword || !newName) {
+      toast.error('信箱、密碼和姓名為必填項。');
+      return;
+    }
 
-      if (error) {
-        console.error('Toggle member status error:', error);
-        toast.error('更新會員狀態失敗: ' + error.message);
-      } else {
-        toast.success(`會員狀態已更新為: ${newStatus === 'active' ? '啟用' : '停用'}`);
-        // 立即更新本地狀態，避免重新載入整個列表
-        setMembers(prevMembers =>
-          prevMembers.map(member =>
-            member.id === member_id
-              ? { ...member, status: newStatus }
-              : member
-          )
-        );
-      }
-    } catch (err) {
-      console.error('Toggle member status error:', err);
-      toast.error('更新會員狀態時發生未知錯誤');
+    const toastId = toast.loading('正在建立會員...');
+    const { data, error } = await supabase.rpc('admin_create_user', {
+      p_email: newEmail,
+      p_password: newPassword,
+      p_name: newName,
+      p_phone: newPhone,
+    });
+
+    if (error) {
+      toast.error('建立會員失敗: ' + error.message, { id: toastId });
+    } else {
+      toast.success('會員已成功建立！', { id: toastId });
+      setNewEmail('');
+      setNewPassword('');
+      setNewName('');
+      setNewPhone('');
+      setIsCreateDialogOpen(false);
+      fetchMembers(); // Refresh the list
     }
   };
 
+  const openEditDialog = (member: Member) => {
+    setSelectedMember(member);
+    setEditName(member.name || '');
+    setEditPhone(member.phone || '');
+    setIsEditDialogOpen(true);
+  };
+  
+  const handleUpdateMember = async () => {
+    if (!selectedMember) return;
+  
+    const toastId = toast.loading('正在更新會員資料...');
+    const { error } = await supabase.rpc('admin_update_member_profile', {
+      p_member_id: selectedMember.id,
+      p_name: editName,
+      p_phone: editPhone,
+    });
+  
+    if (error) {
+      toast.error('更新失敗: ' + error.message, { id: toastId });
+    } else {
+      toast.success('會員資料已更新！', { id: toastId });
+      setIsEditDialogOpen(false);
+      fetchMembers();
+    }
+  };
+
+  const handleToggleMemberStatus = async (member_id: string, current_status: string) => {
+    const newStatus = current_status === 'active' ? 'inactive' : 'active';
+    
+    const toastId = toast.loading('正在更新會員狀態...');
+    const { error } = await supabase.rpc('admin_update_member_status', {
+      p_member_id: member_id,
+      p_status: newStatus,
+    });
+
+    if (error) {
+      toast.error('更新會員狀態失敗: ' + error.message, { id: toastId });
+    } else {
+      toast.success(`會員狀態已更新`, { id: toastId });
+      fetchMembers();
+    }
+  };
 
   if (authLoading || loading) {
-    return (
-      <div className="container mx-auto py-10">
-        <div className="flex justify-center items-center h-64">
-          <div className="text-lg">讀取中...</div>
-        </div>
-      </div>
-    );
+    return <div className="p-10 text-center">讀取中...</div>;
   }
 
-  // 如果使用者未登入或不是管理員，顯示權限不足訊息
   if (!currentUser || !isAdmin) {
-    return (
-      <div className="container mx-auto py-10">
-        <div className="flex justify-center items-center h-64">
-          <div className="text-lg text-red-600">權限不足：只有平台管理員可以訪問此頁面</div>
-        </div>
-      </div>
-    );
+    return <div className="p-10 text-center text-red-600">權限不足：只有平台管理員可以訪問此頁面</div>;
   }
 
   return (
     <div className="container mx-auto py-10">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">會員管理</h1>
-        {/* TODO: Add "New Member" button and dialog */}
-        <Button disabled>新增會員</Button>
+        <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+          <DialogTrigger asChild>
+            <Button>新增會員</Button>
+          </DialogTrigger>
+          <DialogContent className="sm:max-w-[425px]">
+            <DialogHeader>
+              <DialogTitle>新增會員</DialogTitle>
+              <DialogDescription>建立一個新的會員帳戶。</DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="email" className="text-right">信箱</Label>
+                <Input id="email" type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} className="col-span-3"/>
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="password" className="text-right">密碼</Label>
+                <Input id="password" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="col-span-3"/>
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="name" className="text-right">姓名</Label>
+                <Input id="name" value={newName} onChange={(e) => setNewName(e.target.value)} className="col-span-3"/>
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="phone" className="text-right">電話</Label>
+                <Input id="phone" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} className="col-span-3"/>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" onClick={handleCreateMember}>建立</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
       <div className="rounded-md border">
         <Table>
@@ -145,9 +214,7 @@ export default function MembersPage() {
               <TableHead>電話</TableHead>
               <TableHead>狀態</TableHead>
               <TableHead>註冊時間</TableHead>
-              <TableHead>
-                <span className="sr-only">操作</span>
-              </TableHead>
+              <TableHead><span className="sr-only">操作</span></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -178,10 +245,8 @@ export default function MembersPage() {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuLabel>操作</DropdownMenuLabel>
-                        <DropdownMenuItem
-                          onClick={() => handleToggleMemberStatus(member.id, member.status)}
-                          className="cursor-pointer"
-                        >
+                        <DropdownMenuItem onClick={() => openEditDialog(member)}>編輯</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleToggleMemberStatus(member.id, member.status)}>
                           {member.status === 'active' ? '停用會員' : '啟用會員'}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -192,16 +257,35 @@ export default function MembersPage() {
             ) : (
               <TableRow>
                 <TableCell colSpan={7} className="h-24 text-center text-gray-500">
-                  <div className="flex flex-col items-center justify-center space-y-2">
-                    <div>目前沒有會員資料</div>
-                    <div className="text-sm">請檢查資料庫連線或聯絡系統管理員</div>
-                  </div>
+                  目前沒有會員資料
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
       </div>
+      
+      {/* Edit Dialog */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>編輯會員資料</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="edit-name" className="text-right">姓名</Label>
+              <Input id="edit-name" value={editName} onChange={(e) => setEditName(e.target.value)} className="col-span-3"/>
+            </div>
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="edit-phone" className="text-right">電話</Label>
+              <Input id="edit-phone" value={editPhone} onChange={(e) => setEditPhone(e.target.value)} className="col-span-3"/>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" onClick={handleUpdateMember}>儲存變更</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

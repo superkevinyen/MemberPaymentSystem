@@ -30,6 +30,11 @@ const AdminDashboardLayout = ({ children }: { children: ReactNode }) => {
                 <Link href="/enterprise/admin/dashboard/enterprises">Enterprises</Link>
               </Button>
             </li>
+            <li className="mb-2">
+              <Button asChild variant="ghost" className="w-full justify-start text-gray-300 hover:text-white hover:bg-gray-700">
+                <Link href="/enterprise/admin/dashboard/transactions">Transactions</Link>
+              </Button>
+            </li>
           </ul>
         </nav>
       </aside>
