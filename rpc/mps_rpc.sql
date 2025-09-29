@@ -1,968 +1,788 @@
+
 -- ============================================================================
--- Member Payment System (MPS) - RPCs & Business Functions (Commercial)
--- Requires: mps_schema.sql already applied
--- Safe to re-run: each function is dropped before creation
+-- mps_rpc.sql  (Commercial Edition)
+-- All RPCs are SECURITY DEFINER. Re-run safe: we drop then create.
+-- Assumes schemas/tables from mps_schema.sql already exist.
 -- ============================================================================
 
--- 0) Extensions (for crypt/hash)
-create extension if not exists pgcrypto;
+-- Helper: enforce search_path (expects sec.fixed_search_path() exists)
+-- Note: All functions call PERFORM sec.fixed_search_path();
 
--- 1) Helpers (search_path, locks, level/discount)
+-- =======================
+-- A) MEMBER & BINDINGS
+-- =======================
 
--- 1.1 card_lock_key: map uuid -> bigint (for advisory locks)
-drop function if exists app.card_lock_key(uuid);
-create or replace function app.card_lock_key(p_card_id uuid)
-returns bigint
-language sql
-immutable
-as $$
-  select ('x' || substr(p_card_id::text, 1, 15))::bit(60)::bigint
+DROP FUNCTION IF EXISTS app.create_member_profile(text, text, text, text, text, app.card_type) CASCADE;
+CREATE OR REPLACE FUNCTION app.create_member_profile(
+  p_name               text,
+  p_phone              text,
+  p_email              text,
+  p_binding_user_org   text DEFAULT NULL,   -- e.g. 'wechat'
+  p_binding_org_id     text DEFAULT NULL,   -- e.g. openid
+  p_default_card_type  app.card_type DEFAULT 'standard'     -- always issues standard; arg reserved
+) RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_member_id  uuid := gen_random_uuid();
+  v_card_id    uuid := gen_random_uuid();
+BEGIN
+  PERFORM sec.fixed_search_path();
+
+  -- 1) Create member
+  INSERT INTO app.member_profiles(id, name, phone, email, status, created_at, updated_at)
+  VALUES (v_member_id, p_name, p_phone, p_email, 'active', app.now_utc(), app.now_utc());
+
+  -- 2) Auto issue a STANDARD card (1:1; password NULL)
+  INSERT INTO app.member_cards(id, card_no, member_owner_id, card_type, level, discount_rate, points, balance, status, created_at, updated_at, binding_password_hash)
+  VALUES (v_card_id,
+          app.gen_card_no('standard'),
+          v_member_id,
+          'standard',
+          0,
+          app.compute_discount(0),
+          0,
+          0,
+          'active',
+          app.now_utc(),
+          app.now_utc(),
+          NULL);
+
+  -- 3) Bind owner (explicit binding table, if present)
+  INSERT INTO app.card_bindings(card_id, member_id, role, created_at)
+  VALUES (v_card_id, v_member_id, 'owner', app.now_utc());
+
+  -- 4) Optional external identity binding
+  IF p_binding_user_org IS NOT NULL AND p_binding_org_id IS NOT NULL THEN
+    BEGIN
+      INSERT INTO app.member_external_identities(member_id, provider, external_id, meta, created_at)
+      VALUES (v_member_id, p_binding_user_org, p_binding_org_id, '{}'::jsonb, app.now_utc());
+    EXCEPTION WHEN unique_violation THEN
+      RAISE EXCEPTION 'EXTERNAL_ID_ALREADY_BOUND';
+    END;
+  END IF;
+
+  -- 5) Audit
+  PERFORM audit.log('CREATE_MEMBER', 'member_profiles', v_member_id,
+                    jsonb_build_object('name', p_name, 'phone', p_phone, 'email', p_email));
+
+  RETURN v_member_id;
+END;
 $$;
 
--- 1.2 compute_level(points)
-drop function if exists app.compute_level(int);
-create or replace function app.compute_level(p_points int)
-returns int
-language sql
-stable
-set search_path = app, public
-as $$
-  select coalesce((
-    select level
-      from app.membership_levels
-     where is_active
-       and p_points >= min_points
-       and (max_points is null or p_points <= max_points)
-     order by level desc
-     limit 1
-  ), 0)
-$$;
-
--- 1.3 compute_discount(points)
-drop function if exists app.compute_discount(int);
-create or replace function app.compute_discount(p_points int)
-returns numeric(4,3)
-language sql
-stable
-set search_path = app, public
-as $$
-  select coalesce((
-    select discount
-      from app.membership_levels
-     where is_active
-       and p_points >= min_points
-       and (max_points is null or p_points <= max_points)
-     order by level desc
-     limit 1
-  ), 1.000)
-$$;
-
--- 1.4 generate_qr_token_pair: (plain, hash)
-drop function if exists app.generate_qr_token_pair();
-create or replace function app.generate_qr_token_pair()
-returns table(plain text, hash text)
-language plpgsql
-security definer
-set search_path = app, audit, public
-as $$
-declare v_plain text;
-begin
-  v_plain := encode(gen_random_bytes(32), 'base64');  -- 256-bit
-  return query select v_plain, crypt(v_plain, gen_salt('bf'));
-end;
-$$;
-
--- 2) Members & Bindings
-
--- 2.1 create_member_profile: 建會員 + 預設卡 + owner 綁定
-drop function if exists app.create_member_profile(text, text, text, text, text, app.card_type);
-create or replace function app.create_member_profile(
-  p_name text,
-  p_phone text,
-  p_email text,
-  p_binding_user_org text default null,
-  p_binding_org_id  text default null,
-  p_default_card_type app.card_type default 'standard'
-) returns uuid
-language plpgsql
-security definer
-set search_path = app, audit, public
-as $$
-declare
-  v_member_id uuid := gen_random_uuid();
-  v_card_id uuid := gen_random_uuid();
-  v_card_no text;
-begin
-  -- member
-  insert into app.member_profiles(id, name, phone, email, binding_user_org, binding_org_id)
-  values (v_member_id, p_name, p_phone, p_email, p_binding_user_org, p_binding_org_id);
-
-  -- default card
-  v_card_no := app.gen_card_no(p_default_card_type);
-  insert into app.member_cards(id, card_no, card_type, owner_member_id, name, balance, points, level, discount, status)
-  values (
-    v_card_id, v_card_no, p_default_card_type, v_member_id,
-    case when p_default_card_type='standard' then '標準會員卡' else upper(p_default_card_type::text) end,
-    0, 0, app.compute_level(0), app.compute_discount(0), 'active'
-  );
-
-  -- owner binding（不強制密碼）
-  insert into app.card_bindings(card_id, member_id, role, binding_password_hash)
-  values (v_card_id, v_member_id, 'owner', null);
-
-  -- audit
-  insert into audit.event_log(action, object_type, object_id, context)
-  values ('CREATE_MEMBER', 'member_profiles', v_member_id,
-          jsonb_build_object('default_card_id', v_card_id, 'card_type', p_default_card_type));
-
-  return v_member_id;
-end;
-$$;
-
--- 2.2 bind_external_identity: 綁定外部身份（upsert）
-drop function if exists app.bind_external_identity(uuid, text, text, jsonb);
-create or replace function app.bind_external_identity(
-  p_member_id uuid,
-  p_provider text,
-  p_external_id text,
-  p_meta jsonb default '{}'::jsonb
-) returns boolean
-language plpgsql
-security definer
-set search_path = app, audit, public
-as $$
-begin
-  insert into app.member_external_identities(member_id, provider, external_id, meta)
-  values (p_member_id, p_provider, p_external_id, coalesce(p_meta,'{}'::jsonb))
-  on conflict (provider, external_id)
-  do update set member_id = excluded.member_id, meta = excluded.meta, updated_at = app.now_utc();
-
-  insert into audit.event_log(action, object_type, object_id, context)
-  values ('BIND_EXTERNAL_ID', 'member_profiles', p_member_id,
-          jsonb_build_object('provider', p_provider, 'external_id', p_external_id));
-  return true;
-end;
-$$;
-
--- 2.3 bind_member_to_card: 多人共享綁定
--- 設計：若卡已存在 owner 且其 binding_password_hash 不為 null，需驗證密碼。
--- 若卡尚無 owner 綁定，允許第一位呼叫者成為 owner（僅限與卡 owner_member_id 相同的 member）。
-drop function if exists app.bind_member_to_card(uuid, uuid, app.bind_role, text);
-create or replace function app.bind_member_to_card(
+DROP FUNCTION IF EXISTS app.bind_member_to_card(uuid, uuid, app.bind_role, text) CASCADE;
+CREATE OR REPLACE FUNCTION app.bind_member_to_card(
   p_card_id uuid,
   p_member_id uuid,
-  p_role app.bind_role default 'member',
-  p_binding_password text default null
-) returns boolean
-language plpgsql
-security definer
-set search_path = app, audit, public
-as $$
-declare
-  v_owner_hash text;
-  v_owner_member uuid;
-  v_exists boolean;
-begin
-  -- 檢查卡存在
-  perform 1 from app.member_cards where id = p_card_id and status='active';
-  if not found then raise exception 'CARD_NOT_FOUND_OR_INACTIVE'; end if;
+  p_role app.bind_role DEFAULT 'member',
+  p_binding_password text DEFAULT NULL
+) RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_card app.member_cards%ROWTYPE;
+  v_owner_password_hash text;
+  v_owner_count int;
+BEGIN
+  PERFORM sec.fixed_search_path();
 
-  -- 檢查是否已綁定
-  select exists(select 1 from app.card_bindings where card_id=p_card_id and member_id=p_member_id) into v_exists;
-  if v_exists then
-    return true; -- idempotent
-  end if;
+  SELECT * INTO v_card FROM app.member_cards WHERE id = p_card_id;
+  IF NOT FOUND OR v_card.status <> 'active' THEN
+    RAISE EXCEPTION 'CARD_NOT_FOUND_OR_INACTIVE';
+  END IF;
 
-  -- 取得 owner 與其密碼
-  select cb.binding_password_hash, mc.owner_member_id
-    into v_owner_hash, v_owner_member
-  from app.member_cards mc
-  left join app.card_bindings cb on cb.card_id = mc.id and cb.role='owner'
-  where mc.id = p_card_id
-  limit 1;
+  -- Standard and voucher are non-shareable
+  IF v_card.card_type IN ('standard','voucher') AND p_member_id <> v_card.member_owner_id THEN
+    RAISE EXCEPTION 'CARD_TYPE_NOT_SHAREABLE';
+  END IF;
 
-  if v_owner_member is null then
-    raise exception 'CARD_OWNER_NOT_DEFINED';
-  end if;
+  -- For prepaid/corporate: require password if defined
+  IF v_card.card_type IN ('prepaid','corporate') THEN
+    SELECT COUNT(*) INTO v_owner_count
+    FROM app.card_bindings
+    WHERE card_id = v_card.id AND role = 'owner';
+    IF v_owner_count = 0 THEN
+      RAISE EXCEPTION 'CARD_OWNER_NOT_DEFINED';
+    END IF;
 
-  -- 若已存在 owner 的密碼，必須驗證
-  if v_owner_hash is not null then
-    if p_binding_password is null or not (v_owner_hash = crypt(p_binding_password, v_owner_hash)) then
-      raise exception 'INVALID_BINDING_PASSWORD';
-    end if;
-  else
-    -- 未設密碼：僅當呼叫者欲以 owner 身份綁定，且 member_id 等於卡 owner_member_id
-    if p_role='owner' and p_member_id <> v_owner_member then
-      raise exception 'ONLY_OWNER_MEMBER_CAN_CLAIM_OWNER_ROLE';
-    end if;
-  end if;
+    IF v_card.binding_password_hash IS NOT NULL THEN
+      IF p_binding_password IS NULL OR NOT (v_card.binding_password_hash = crypt(p_binding_password, v_card.binding_password_hash)) THEN
+        RAISE EXCEPTION 'INVALID_BINDING_PASSWORD';
+      END IF;
+    END IF;
+  END IF;
 
-  insert into app.card_bindings(card_id, member_id, role, binding_password_hash)
-  values (p_card_id, p_member_id, p_role,
-          case when p_role='owner' and p_binding_password is not null
-               then crypt(p_binding_password, gen_salt('bf')) else null end)
-  on conflict (card_id, member_id) do nothing;
+  -- Prevent duplicate role conflict
+  INSERT INTO app.card_bindings(card_id, member_id, role, created_at)
+  VALUES (p_card_id, p_member_id, p_role, app.now_utc())
+  ON CONFLICT (card_id, member_id) DO UPDATE SET role = EXCLUDED.role;
 
-  insert into audit.event_log(action, object_type, object_id, context)
-  values ('BIND', 'member_card', p_card_id, jsonb_build_object('member_id', p_member_id, 'role', p_role));
-  return true;
-end;
+  PERFORM audit.log('BIND_CARD', 'member_cards', p_card_id,
+                    jsonb_build_object('member_id', p_member_id, 'role', p_role));
+  RETURN TRUE;
+END;
 $$;
 
--- 2.4 unbind_member_from_card
-drop function if exists app.unbind_member_from_card(uuid, uuid);
-create or replace function app.unbind_member_from_card(
+DROP FUNCTION IF EXISTS app.unbind_member_from_card(uuid, uuid) CASCADE;
+CREATE OR REPLACE FUNCTION app.unbind_member_from_card(
   p_card_id uuid,
   p_member_id uuid
-) returns boolean
-language plpgsql
-security definer
-set search_path = app, audit, public
-as $$
-declare
-  v_is_owner boolean;
-  v_owner_count int;
-begin
-  select (role='owner') into v_is_owner
-  from app.card_bindings where card_id=p_card_id and member_id=p_member_id;
+) RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_owner_left int;
+BEGIN
+  PERFORM sec.fixed_search_path();
 
-  if not found then
-    return true; -- idempotent
-  end if;
+  DELETE FROM app.card_bindings
+  WHERE card_id = p_card_id AND member_id = p_member_id;
 
-  if v_is_owner then
-    -- 不允許移除最後一位 owner
-    select count(*) into v_owner_count from app.card_bindings where card_id=p_card_id and role='owner';
-    if v_owner_count <= 1 then
-      raise exception 'CANNOT_REMOVE_LAST_OWNER';
-    end if;
-  end if;
+  SELECT COUNT(*) INTO v_owner_left FROM app.card_bindings WHERE card_id = p_card_id AND role = 'owner';
+  IF v_owner_left = 0 THEN
+    RAISE EXCEPTION 'CANNOT_REMOVE_LAST_OWNER';
+  END IF;
 
-  delete from app.card_bindings where card_id=p_card_id and member_id=p_member_id;
-
-  insert into audit.event_log(action, object_type, object_id, context)
-  values ('UNBIND', 'member_card', p_card_id, jsonb_build_object('member_id', p_member_id));
-  return true;
-end;
+  PERFORM audit.log('UNBIND_CARD', 'member_cards', p_card_id, jsonb_build_object('member_id', p_member_id));
+  RETURN TRUE;
+END;
 $$;
 
--- 3) QR Code
+-- =======================
+-- B) QR CODE MANAGEMENT
+-- =======================
 
--- 3.1 rotate_card_qr
-drop function if exists app.rotate_card_qr(uuid, int);
-create or replace function app.rotate_card_qr(
+DROP FUNCTION IF EXISTS app.rotate_card_qr(uuid, integer) CASCADE;
+CREATE OR REPLACE FUNCTION app.rotate_card_qr(
   p_card_id uuid,
-  p_ttl_seconds int default 900
-) returns table(qr_plain text, qr_expires_at timestamptz)
-language plpgsql
-security definer
-set search_path = app, audit, public
-as $$
-declare
-  v_card app.member_cards%rowtype;
-  v_plain text;
-  v_hash text;
-  v_expires timestamptz;
-begin
-  select * into v_card from app.member_cards where id = p_card_id for update;
-  if not found then raise exception 'CARD_NOT_FOUND'; end if;
-  if v_card.status <> 'active' then raise exception 'CARD_NOT_ACTIVE'; end if;
+  p_ttl_seconds integer DEFAULT 900
+) RETURNS TABLE(qr_plain text, qr_expires_at timestamptz)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_plain text := encode(gen_random_bytes(32),'base64');
+  v_hash  text;
+  v_expires timestamptz := app.now_utc() + make_interval(secs => GREATEST(p_ttl_seconds, 60));
+BEGIN
+  PERFORM sec.fixed_search_path();
+  v_hash := crypt(v_plain, gen_salt('bf'));
 
-  select plain, hash into v_plain, v_hash from app.generate_qr_token_pair();
-  v_expires := app.now_utc() + make_interval(secs => greatest(60, p_ttl_seconds));
+  -- Upsert current QR state
+  INSERT INTO app.card_qr_state(card_id, qr_hash, issued_at, expires_at)
+  VALUES (p_card_id, v_hash, app.now_utc(), v_expires)
+  ON CONFLICT (card_id) DO UPDATE
+    SET qr_hash = EXCLUDED.qr_hash,
+        issued_at = EXCLUDED.issued_at,
+        expires_at = EXCLUDED.expires_at;
 
-  insert into app.card_qr_state(card_id, token_hash, expires_at, updated_at)
-  values (p_card_id, v_hash, v_expires, app.now_utc())
-  on conflict (card_id)
-  do update set token_hash = excluded.token_hash,
-                expires_at = excluded.expires_at,
-                updated_at = app.now_utc();
+  -- Append history
+  INSERT INTO app.card_qr_history(card_id, qr_hash, issued_at, expires_at)
+  VALUES (p_card_id, v_hash, app.now_utc(), v_expires);
 
-  insert into app.card_qr_history(card_id, token_hash, expires_at, issued_by)
-  values (p_card_id, v_hash, v_expires, null);
-
-  insert into audit.event_log(action, object_type, object_id, context)
-  values ('QR_ROTATE', 'member_card', p_card_id, jsonb_build_object('expires_at', v_expires));
-
-  return query select v_plain, v_expires;
-end;
+  PERFORM audit.log('QR_ROTATE','member_cards', p_card_id, jsonb_build_object('ttl', p_ttl_seconds));
+  RETURN QUERY SELECT v_plain, v_expires;
+END;
 $$;
 
--- 3.2 validate_qr_plain: return card_id or exception
-drop function if exists app.validate_qr_plain(text);
-create or replace function app.validate_qr_plain(
+DROP FUNCTION IF EXISTS app.revoke_card_qr(uuid) CASCADE;
+CREATE OR REPLACE FUNCTION app.revoke_card_qr(
+  p_card_id uuid
+) RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  PERFORM sec.fixed_search_path();
+  UPDATE app.card_qr_state SET expires_at = app.now_utc() WHERE card_id = p_card_id;
+  PERFORM audit.log('QR_REVOKE','member_cards', p_card_id, '{}'::jsonb);
+  RETURN TRUE;
+END;
+$$;
+
+DROP FUNCTION IF EXISTS app.validate_qr_plain(text) CASCADE;
+CREATE OR REPLACE FUNCTION app.validate_qr_plain(
   p_qr_plain text
-) returns uuid
-language plpgsql
-security definer
-set search_path = app, audit, public
-as $$
-declare
-  v_rec record;
-begin
-  if p_qr_plain is null or length(p_qr_plain) < 16 then
-    raise exception 'INVALID_QR';
-  end if;
-
-  for v_rec in
-    select card_id, token_hash, expires_at
-      from app.card_qr_state
-     where expires_at >= app.now_utc()
-  loop
-    if v_rec.token_hash = crypt(p_qr_plain, v_rec.token_hash) then
-      return v_rec.card_id;
-    end if;
-  end loop;
-
-  raise exception 'QR_EXPIRED_OR_INVALID';
-end;
-$$;
-
--- 3.3 revoke_card_qr: 立即失效
-drop function if exists app.revoke_card_qr(uuid);
-create or replace function app.revoke_card_qr(p_card_id uuid)
-returns boolean
-language plpgsql
-security definer
-set search_path = app, audit, public
-as $$
-begin
-  update app.card_qr_state
-     set expires_at = app.now_utc(), updated_at = app.now_utc()
-   where card_id = p_card_id;
-  insert into audit.event_log(action, object_type, object_id, context)
-  values ('QR_REVOKE', 'member_card', p_card_id, '{}'::jsonb);
-  return true;
-end;
-$$;
-
--- 3.4 cron_rotate_qr_tokens: for prepaid/corporate 批量輪換
-drop function if exists app.cron_rotate_qr_tokens(int);
-create or replace function app.cron_rotate_qr_tokens(
-  p_ttl_seconds int default 300
-) returns int
-language plpgsql
-security definer
-set search_path = app, audit, public
-as $$
-declare
-  v_cnt int := 0;
-  v_plain text;
-  v_hash text;
-  v_expires timestamptz;
+) RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
   v_card_id uuid;
-begin
-  for v_card_id in
-    select id from app.member_cards
-     where status='active' and card_type in ('prepaid','corporate')
-  loop
-    select plain, hash into v_plain, v_hash from app.generate_qr_token_pair();
-    v_expires := app.now_utc() + make_interval(secs => greatest(60, p_ttl_seconds));
+BEGIN
+  PERFORM sec.fixed_search_path();
+  IF p_qr_plain IS NULL OR length(p_qr_plain) < 16 THEN
+    RAISE EXCEPTION 'INVALID_QR';
+  END IF;
 
-    insert into app.card_qr_state(card_id, token_hash, expires_at, updated_at)
-    values (v_card_id, v_hash, v_expires, app.now_utc())
-    on conflict (card_id)
-    do update set token_hash = excluded.token_hash,
-                  expires_at = excluded.expires_at,
-                  updated_at = app.now_utc();
+  SELECT s.card_id INTO v_card_id
+  FROM app.card_qr_state s
+  WHERE s.expires_at > app.now_utc()
+    AND s.qr_hash = crypt(p_qr_plain, s.qr_hash)
+  LIMIT 1;
 
-    insert into app.card_qr_history(card_id, token_hash, expires_at, issued_by)
-    values (v_card_id, v_hash, v_expires, null);
+  IF v_card_id IS NULL THEN
+    RAISE EXCEPTION 'QR_EXPIRED_OR_INVALID';
+  END IF;
 
-    v_cnt := v_cnt + 1;
-  end loop;
-
-  insert into audit.event_log(action, object_type, object_id, context)
-  values ('QR_CRON_ROTATE', 'system', null, jsonb_build_object('affected', v_cnt));
-  return v_cnt;
-end;
+  RETURN v_card_id;
+END;
 $$;
 
--- 4) Payments / Refunds / Recharge
+DROP FUNCTION IF EXISTS app.cron_rotate_qr_tokens(integer) CASCADE;
+CREATE OR REPLACE FUNCTION app.cron_rotate_qr_tokens(
+  p_ttl_seconds integer DEFAULT 300
+) RETURNS int
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_cnt int := 0;
+  r RECORD;
+  v_plain text;
+  v_hash  text;
+  v_expires timestamptz := app.now_utc() + make_interval(secs => GREATEST(p_ttl_seconds, 60));
+BEGIN
+  PERFORM sec.fixed_search_path();
+  FOR r IN
+    SELECT id FROM app.member_cards WHERE status='active' AND card_type IN ('prepaid','corporate')
+  LOOP
+    v_plain := encode(gen_random_bytes(32),'base64');
+    v_hash := crypt(v_plain, gen_salt('bf'));
+    INSERT INTO app.card_qr_state(card_id, qr_hash, issued_at, expires_at)
+    VALUES (r.id, v_hash, app.now_utc(), v_expires)
+    ON CONFLICT (card_id) DO UPDATE
+      SET qr_hash = EXCLUDED.qr_hash,
+          issued_at = EXCLUDED.issued_at,
+          expires_at = EXCLUDED.expires_at;
+    INSERT INTO app.card_qr_history(card_id, qr_hash, issued_at, expires_at)
+    VALUES (r.id, v_hash, app.now_utc(), v_expires);
+    v_cnt := v_cnt + 1;
+  END LOOP;
+  PERFORM audit.log('QR_CRON_ROTATE','system', NULL, jsonb_build_object('affected', v_cnt));
+  RETURN v_cnt;
+END;
+$$;
 
--- 4.1 merchant_charge_by_qr
-drop function if exists app.merchant_charge_by_qr(text, text, numeric, text, jsonb, text);
-create or replace function app.merchant_charge_by_qr(
+-- =======================
+-- C) PAYMENTS / REFUNDS / RECHARGE
+-- =======================
+
+DROP FUNCTION IF EXISTS app.merchant_charge_by_qr(text, text, numeric, text, jsonb, text) CASCADE;
+CREATE OR REPLACE FUNCTION app.merchant_charge_by_qr(
   p_merchant_code text,
   p_qr_plain text,
   p_raw_amount numeric,
-  p_idempotency_key text default null,
-  p_tag jsonb default '{}'::jsonb,
-  p_external_order_id text default null
-) returns table (tx_id uuid, tx_no text, card_id uuid, final_amount numeric, discount numeric)
-language plpgsql
-security definer
-set search_path = app, audit, public
-as $$
-declare
-  v_merch app.merchants%rowtype;
-  v_is_merch_user boolean;
-  v_card app.member_cards%rowtype;
-  v_card_id uuid;
-  v_lock_key bigint;
+  p_idempotency_key text DEFAULT NULL,
+  p_tag jsonb DEFAULT '{}'::jsonb,
+  p_external_order_id text DEFAULT NULL
+) RETURNS TABLE (tx_id uuid, tx_no text, card_id uuid, final_amount numeric, discount numeric)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_merch app.merchants%ROWTYPE;
+  v_is_user boolean;
+  v_card app.member_cards%ROWTYPE;
   v_disc numeric(4,3) := 1.000;
   v_final numeric(12,2);
   v_tx_id uuid := gen_random_uuid();
   v_tx_no text;
-  v_points int;
-begin
-  if p_raw_amount is null or p_raw_amount <= 0 then raise exception 'INVALID_PRICE'; end if;
-  if p_qr_plain is null or length(p_qr_plain) < 16 then raise exception 'INVALID_QR'; end if;
+  v_ref_exists uuid;
+BEGIN
+  PERFORM sec.fixed_search_path();
 
-  select * into v_merch from app.merchants where code=p_merchant_code and status='active';
-  if not found then raise exception 'MERCHANT_NOT_FOUND_OR_INACTIVE'; end if;
+  IF p_raw_amount IS NULL OR p_raw_amount <= 0 THEN
+    RAISE EXCEPTION 'INVALID_PRICE';
+  END IF;
 
-  -- 檢查呼叫者是否為商戶成員
-  select exists(
-    select 1 from app.merchant_users mu where mu.merchant_id=v_merch.id and mu.auth_user_id=auth.uid()
-  ) into v_is_merch_user;
-  if not v_is_merch_user then raise exception 'NOT_MERCHANT_USER'; end if;
+  SELECT * INTO v_merch FROM app.merchants WHERE code=p_merchant_code AND active=true;
+  IF NOT FOUND THEN RAISE EXCEPTION 'MERCHANT_NOT_FOUND_OR_INACTIVE'; END IF;
 
-  -- 解析 QR -> card_id
-  v_card_id := app.validate_qr_plain(p_qr_plain);
+  SELECT EXISTS(SELECT 1 FROM app.merchant_users WHERE merchant_id=v_merch.id AND user_id=auth.uid()) INTO v_is_user;
+  IF NOT v_is_user THEN RAISE EXCEPTION 'NOT_MERCHANT_USER'; END IF;
 
-  -- lock & load
-  v_lock_key := app.card_lock_key(v_card_id);
-  perform pg_advisory_xact_lock(v_lock_key);
+  -- Validate QR -> card_id
+  SELECT * INTO v_card FROM app.member_cards WHERE id = app.validate_qr_plain(p_qr_plain) FOR UPDATE;
+  IF v_card.status <> 'active' THEN RAISE EXCEPTION 'CARD_NOT_ACTIVE'; END IF;
+  IF v_card.expires_at IS NOT NULL AND v_card.expires_at < app.now_utc() THEN RAISE EXCEPTION 'CARD_EXPIRED'; END IF;
 
-  select * into v_card from app.member_cards where id=v_card_id for update;
-  if not found then raise exception 'CARD_NOT_FOUND'; end if;
-  if v_card.status <> 'active' then raise exception 'CARD_NOT_ACTIVE'; end if;
-  if v_card.expires_at is not null and v_card.expires_at < app.now_utc() then
-    raise exception 'CARD_EXPIRED';
-  end if;
+  -- Idempotency by key
+  IF p_idempotency_key IS NOT NULL THEN
+    BEGIN
+      INSERT INTO app.idempotency_registry(idempotency_key, tx_id, created_at) VALUES (p_idempotency_key, v_tx_id, app.now_utc());
+    EXCEPTION WHEN unique_violation THEN
+      RETURN QUERY
+        SELECT t.id, t.tx_no, t.card_id, t.final_amount, t.discount_applied
+        FROM app.idempotency_registry ir
+        JOIN app.transactions t ON t.id = ir.tx_id
+        WHERE ir.idempotency_key = p_idempotency_key AND t.status='completed'
+        LIMIT 1;
+      RETURN;
+    END;
+  END IF;
 
-  -- idempotency（若已存在完成交易，直接回傳）
-  if p_idempotency_key is not null then
-    begin
-      insert into app.idempotency_registry(idempotency_key, tx_id)
-      values (p_idempotency_key, v_tx_id);
-    exception when unique_violation then
-      return query
-        select t.id, t.tx_no, t.card_id, t.final_amount, t.discount_applied
-          from app.idempotency_registry ir
-          join app.transactions t on t.id = ir.tx_id
-         where ir.idempotency_key = p_idempotency_key
-           and t.status='completed'
-         limit 1;
-      return;
-    end;
-  end if;
+  -- Optional external order mapping
+  IF p_external_order_id IS NOT NULL THEN
+    BEGIN
+      INSERT INTO app.merchant_order_registry(merchant_id, external_order_id, tx_id, created_at)
+      VALUES (v_merch.id, p_external_order_id, v_tx_id, app.now_utc());
+    EXCEPTION WHEN unique_violation THEN
+      RETURN QUERY
+        SELECT t.id, t.tx_no, t.card_id, t.final_amount, t.discount_applied
+        FROM app.merchant_order_registry mo
+        JOIN app.transactions t ON t.id = mo.tx_id
+        WHERE mo.merchant_id=v_merch.id AND mo.external_order_id=p_external_order_id AND t.status='completed'
+        LIMIT 1;
+      RETURN;
+    END;
+  END IF;
 
-  -- external order registry（可選）
-  if p_external_order_id is not null then
-    begin
-      insert into app.merchant_order_registry(merchant_id, external_order_id, tx_id)
-      values (v_merch.id, p_external_order_id, v_tx_id);
-    exception when unique_violation then
-      return query
-        select t.id, t.tx_no, t.card_id, t.final_amount, t.discount_applied
-          from app.merchant_order_registry mo
-          join app.transactions t on t.id = mo.tx_id
-         where mo.merchant_id = v_merch.id
-           and mo.external_order_id = p_external_order_id
-           and t.status='completed'
-         limit 1;
-      return;
-    end;
-  end if;
-
-  -- 計算折扣
-  if v_card.card_type = 'standard' then
-    v_disc  := app.compute_discount(v_card.points);
-  elsif v_card.card_type = 'prepaid' then
-    v_disc  := coalesce(v_card.fixed_discount, app.compute_discount(v_card.points));
-  elsif v_card.card_type = 'corporate' then
-    v_disc  := coalesce(v_card.fixed_discount, 1.000);
-  else
-    raise exception 'UNSUPPORTED_CARD_TYPE_FOR_PAYMENT';
-  end if;
+  -- Discount rule by card type
+  IF v_card.card_type = 'standard' THEN
+    v_disc := app.compute_discount(v_card.points);
+  ELSIF v_card.card_type = 'prepaid' THEN
+    v_disc := COALESCE(v_card.fixed_discount, app.compute_discount(v_card.points));
+  ELSIF v_card.card_type = 'corporate' THEN
+    v_disc := COALESCE(v_card.fixed_discount, 1.000);
+  ELSE
+    RAISE EXCEPTION 'UNSUPPORTED_CARD_TYPE_FOR_PAYMENT';
+  END IF;
 
   v_final := round(p_raw_amount * v_disc, 2);
-  if v_card.balance < v_final then raise exception 'INSUFFICIENT_BALANCE'; end if;
+  IF v_card.balance < v_final THEN RAISE EXCEPTION 'INSUFFICIENT_BALANCE'; END IF;
 
-  -- 建立交易（processing）
+  -- Lock by advisory
+  PERFORM pg_advisory_xact_lock(sec.card_lock_key(v_card.id));
+
+  -- Create tx number registry
   v_tx_no := app.gen_tx_no('payment');
+  INSERT INTO app.tx_registry(tx_no, tx_id, created_at) VALUES (v_tx_no, v_tx_id, app.now_utc()) ON CONFLICT DO NOTHING;
 
-  insert into app.tx_registry(tx_no, tx_id) values (v_tx_no, v_tx_id)
-  on conflict (tx_no) do nothing;
+  -- Insert transaction
+  INSERT INTO app.transactions(id, tx_no, card_id, card_type, merchant_id, tx_type,
+    raw_amount, discount_applied, final_amount, points_earned, status, tag, payment_method, created_at)
+  VALUES (v_tx_id, v_tx_no, v_card.id, v_card.card_type, v_merch.id, 'payment',
+    p_raw_amount, v_disc, v_final,
+    CASE WHEN v_card.card_type IN ('standard','prepaid') THEN floor(p_raw_amount)::int ELSE 0 END,
+    'processing', COALESCE(p_tag,'{}'::jsonb), 'balance', app.now_utc());
 
-  v_points := floor(p_raw_amount)::int;
+  -- Update balances / points
+  UPDATE app.member_cards
+  SET balance = balance - v_final,
+      points  = CASE WHEN card_type IN ('standard','prepaid') THEN points + floor(p_raw_amount)::int ELSE points END,
+      level   = CASE WHEN card_type IN ('standard','prepaid')
+                      THEN app.compute_level(points + floor(p_raw_amount)::int)
+                      ELSE level END,
+      discount_rate = CASE WHEN card_type IN ('standard','prepaid')
+                      THEN app.compute_discount(points + floor(p_raw_amount)::int)
+                      ELSE discount_rate END,
+      updated_at = app.now_utc()
+  WHERE id = v_card.id;
 
-  insert into app.transactions(
-    id, tx_no, tx_type, card_id, merchant_id,
-    raw_amount, discount_applied, final_amount, points_earned, status,
-    reason, payment_method, external_order_id, idempotency_key, processed_by_user_id, tag
-  ) values (
-    v_tx_id, v_tx_no, 'payment', v_card_id, v_merch.id,
-    p_raw_amount, v_disc, v_final, case when v_card.card_type in ('standard','prepaid') then v_points else 0 end, 'processing',
-    null, 'balance', p_external_order_id, p_idempotency_key, auth.uid(), coalesce(p_tag,'{}'::jsonb)
-  );
+  -- Point ledger
+  IF v_card.card_type IN ('standard','prepaid') THEN
+    INSERT INTO app.point_ledger(id, card_id, tx_id, change, balance_before, balance_after, reason, created_at)
+    VALUES (gen_random_uuid(), v_card.id, v_tx_id, floor(p_raw_amount)::int, v_card.points,
+            (SELECT points FROM app.member_cards WHERE id=v_card.id), 'payment_earn', app.now_utc());
+  END IF;
 
-  -- 更新餘額/積分/等級
-  update app.member_cards
-     set balance = balance - v_final,
-         points  = case when v_card.card_type in ('standard','prepaid') then points + v_points else points end,
-         level   = case when v_card.card_type in ('standard','prepaid')
-                        then app.compute_level(points + v_points)
-                        else level end,
-         discount= case when v_card.card_type in ('standard','prepaid')
-                        then app.compute_discount(points)
-                        else coalesce(fixed_discount, discount) end,
-         updated_at = app.now_utc()
-   where id = v_card_id;
+  UPDATE app.transactions SET status='completed' WHERE id = v_tx_id;
 
-  -- 完成交易
-  update app.transactions set status='completed', updated_at=app.now_utc() where id = v_tx_id;
+  PERFORM audit.log('PAYMENT','transaction', v_tx_id, jsonb_build_object('merchant', v_merch.code, 'final', v_final));
 
-  -- 審計
-  insert into audit.event_log(action, object_type, object_id, context)
-  values ('PAYMENT', 'transaction', v_tx_id,
-          jsonb_build_object('merchant', v_merch.code, 'final', v_final, 'card_id', v_card_id));
-
-  return query select v_tx_id, v_tx_no, v_card_id, v_final, v_disc;
-end;
+  RETURN QUERY SELECT v_tx_id, v_tx_no, v_card.id, v_final, v_disc;
+END;
 $$;
 
--- 4.2 merchant_refund_tx
-drop function if exists app.merchant_refund_tx(text, text, numeric, jsonb);
-create or replace function app.merchant_refund_tx(
+DROP FUNCTION IF EXISTS app.merchant_refund_tx(text, text, numeric, jsonb) CASCADE;
+CREATE OR REPLACE FUNCTION app.merchant_refund_tx(
   p_merchant_code text,
   p_original_tx_no text,
   p_refund_amount numeric,
-  p_tag jsonb default '{}'::jsonb
-) returns table (refund_tx_id uuid, refund_tx_no text, refunded_amount numeric)
-language plpgsql
-security definer
-set search_path = app, audit, public
-as $$
-declare
-  v_merch app.merchants%rowtype;
-  v_is_merch_user boolean;
-  v_orig app.transactions%rowtype;
-  v_card app.member_cards%rowtype;
-  v_ref_left numeric(12,2);
+  p_tag jsonb DEFAULT '{}'::jsonb
+) RETURNS TABLE (refund_tx_id uuid, refund_tx_no text, refunded_amount numeric)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_merch app.merchants%ROWTYPE;
+  v_is_user boolean;
+  v_orig app.transactions%ROWTYPE;
+  v_left numeric(12,2);
   v_ref_tx_id uuid := gen_random_uuid();
   v_ref_tx_no text;
-  v_lock_key bigint;
-begin
-  if p_refund_amount is null or p_refund_amount <= 0 then raise exception 'INVALID_REFUND_AMOUNT'; end if;
+BEGIN
+  PERFORM sec.fixed_search_path();
+  IF p_refund_amount IS NULL OR p_refund_amount <= 0 THEN RAISE EXCEPTION 'INVALID_REFUND_AMOUNT'; END IF;
 
-  select * into v_merch from app.merchants where code=p_merchant_code and status='active';
-  if not found then raise exception 'MERCHANT_NOT_FOUND_OR_INACTIVE'; end if;
+  SELECT * INTO v_merch FROM app.merchants WHERE code=p_merchant_code AND active=true;
+  IF NOT FOUND THEN RAISE EXCEPTION 'MERCHANT_NOT_FOUND_OR_INACTIVE'; END IF;
 
-  select exists(select 1 from app.merchant_users where merchant_id=v_merch.id and auth_user_id=auth.uid())
-    into v_is_merch_user;
-  if not v_is_merch_user then raise exception 'NOT_MERCHANT_USER'; end if;
+  SELECT EXISTS(SELECT 1 FROM app.merchant_users WHERE merchant_id=v_merch.id AND user_id=auth.uid()) INTO v_is_user;
+  IF NOT v_is_user THEN RAISE EXCEPTION 'NOT_MERCHANT_USER'; END IF;
 
-  select * into v_orig from app.transactions where tx_no=p_original_tx_no and merchant_id=v_merch.id;
-  if not found then raise exception 'ORIGINAL_TX_NOT_FOUND'; end if;
-  if v_orig.tx_type<>'payment' or v_orig.status not in ('completed','refunded') then
-    raise exception 'ONLY_COMPLETED_PAYMENT_REFUNDABLE';
-  end if;
-  if v_orig.status='refunded' then
-    -- 仍允許部分退款紀錄存在，但左邊可能=0
-    null;
-  end if;
+  SELECT * INTO v_orig FROM app.transactions WHERE tx_no=p_original_tx_no AND merchant_id=v_merch.id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'ORIGINAL_TX_NOT_FOUND'; END IF;
+  IF v_orig.tx_type <> 'payment' OR v_orig.status NOT IN ('completed','refunded') THEN
+    RAISE EXCEPTION 'ONLY_COMPLETED_PAYMENT_REFUNDABLE';
+  END IF;
 
-  -- 剩餘可退
-  select v_orig.final_amount - coalesce(sum(final_amount),0)
-    into v_ref_left
-  from app.transactions
-  where original_tx_id = v_orig.id
-    and tx_type = 'refund'
-    and status in ('processing','completed');
-  if v_ref_left is null then v_ref_left := v_orig.final_amount; end if;
-  if p_refund_amount > v_ref_left then raise exception 'REFUND_EXCEEDS_REMAINING'; end if;
+  SELECT v_orig.final_amount - COALESCE((
+    SELECT SUM(final_amount) FROM app.transactions
+    WHERE tx_type='refund' AND card_id=v_orig.card_id AND reason=v_orig.tx_no AND status IN ('processing','completed')
+  ), 0)
+  INTO v_left;
+  IF v_left IS NULL THEN v_left := v_orig.final_amount; END IF;
+  IF p_refund_amount > v_left THEN RAISE EXCEPTION 'REFUND_EXCEEDS_REMAINING'; END IF;
 
-  -- lock card
-  select * into v_card from app.member_cards where id=v_orig.card_id for update;
-  if not found then raise exception 'CARD_NOT_FOUND'; end if;
+  -- Lock
+  PERFORM pg_advisory_xact_lock(sec.card_lock_key(v_orig.card_id));
 
-  v_lock_key := app.card_lock_key(v_orig.card_id);
-  perform pg_advisory_xact_lock(v_lock_key);
-
-  -- 建立退款交易
   v_ref_tx_no := app.gen_tx_no('refund');
-  insert into app.tx_registry(tx_no, tx_id) values (v_ref_tx_no, v_ref_tx_id)
-  on conflict (tx_no) do nothing;
+  INSERT INTO app.tx_registry(tx_no, tx_id, created_at) VALUES (v_ref_tx_no, v_ref_tx_id, app.now_utc()) ON CONFLICT DO NOTHING;
 
-  insert into app.transactions(
-    id, tx_no, tx_type, card_id, merchant_id,
-    raw_amount, discount_applied, final_amount, points_earned, status,
-    reason, payment_method, original_tx_id, processed_by_user_id, tag
-  ) values (
-    v_ref_tx_id, v_ref_tx_no, 'refund', v_orig.card_id, v_merch.id,
-    p_refund_amount, 1.000, p_refund_amount, 0, 'processing',
-    v_orig.tx_no, v_orig.payment_method, v_orig.id, auth.uid(), coalesce(p_tag,'{}'::jsonb)
-  );
+  INSERT INTO app.transactions(id, tx_no, card_id, card_type, merchant_id, tx_type,
+    raw_amount, discount_applied, final_amount, points_earned, status, tag, reason, payment_method, created_at)
+  VALUES (v_ref_tx_id, v_ref_tx_no, v_orig.card_id, v_orig.card_type, v_merch.id, 'refund',
+    p_refund_amount, 1.000, p_refund_amount, 0, 'processing', COALESCE(p_tag,'{}'::jsonb), v_orig.tx_no, v_orig.payment_method, app.now_utc());
 
-  -- 回補餘額
-  update app.member_cards set balance = balance + p_refund_amount, updated_at=app.now_utc()
-   where id = v_orig.card_id;
+  UPDATE app.member_cards SET balance = balance + p_refund_amount, updated_at = app.now_utc() WHERE id = v_orig.card_id;
 
-  update app.transactions set status='completed', updated_at=app.now_utc() where id = v_ref_tx_id;
+  UPDATE app.transactions SET status='completed' WHERE id = v_ref_tx_id;
 
-  -- 若已全退，標示原交易 refunded
-  if p_refund_amount >= v_ref_left then
-    update app.transactions set status='refunded', updated_at=app.now_utc() where id = v_orig.id;
-  end if;
+  IF p_refund_amount >= v_left THEN
+    UPDATE app.transactions SET status='refunded' WHERE id = v_orig.id;
+  END IF;
 
-  insert into audit.event_log(action, object_type, object_id, context)
-  values ('REFUND', 'transaction', v_ref_tx_id,
-          jsonb_build_object('merchant', v_merch.code, 'amount', p_refund_amount, 'original', v_orig.tx_no));
+  PERFORM audit.log('REFUND','transaction', v_ref_tx_id, jsonb_build_object('merchant', v_merch.code, 'amount', p_refund_amount));
 
-  return query select v_ref_tx_id, v_ref_tx_no, p_refund_amount;
-end;
+  RETURN QUERY SELECT v_ref_tx_id, v_ref_tx_no, p_refund_amount;
+END;
 $$;
 
--- 4.3 user_recharge_card
-drop function if exists app.user_recharge_card(uuid, numeric, app.pay_method, jsonb, text, text);
-create or replace function app.user_recharge_card(
+DROP FUNCTION IF EXISTS app.user_recharge_card(uuid, numeric, app.pay_method, jsonb, text, text) CASCADE;
+CREATE OR REPLACE FUNCTION app.user_recharge_card(
   p_card_id uuid,
   p_amount numeric,
-  p_payment_method app.pay_method default 'wechat',
-  p_tag jsonb default '{}'::jsonb,
-  p_idempotency_key text default null,
-  p_external_order_id text default null
-) returns table (tx_id uuid, tx_no text, card_id uuid, amount numeric)
-language plpgsql
-security definer
-set search_path = app, audit, public
-as $$
-declare
-  v_card app.member_cards%rowtype;
+  p_payment_method app.pay_method DEFAULT 'wechat',
+  p_tag jsonb DEFAULT '{}'::jsonb,
+  p_idempotency_key text DEFAULT NULL,
+  p_external_order_id text DEFAULT NULL
+) RETURNS TABLE (tx_id uuid, tx_no text, card_id uuid, amount numeric)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_card app.member_cards%ROWTYPE;
   v_tx_id uuid := gen_random_uuid();
   v_tx_no text;
-begin
-  if p_amount is null or p_amount <= 0 then raise exception 'INVALID_RECHARGE_AMOUNT'; end if;
+BEGIN
+  PERFORM sec.fixed_search_path();
+  IF p_amount IS NULL OR p_amount <= 0 THEN RAISE EXCEPTION 'INVALID_RECHARGE_AMOUNT'; END IF;
 
-  -- idempotency
-  if p_idempotency_key is not null then
-    begin
-      insert into app.idempotency_registry(idempotency_key, tx_id) values (p_idempotency_key, v_tx_id);
-    exception when unique_violation then
-      return query
-        select t.id, t.tx_no, t.card_id, t.final_amount
-          from app.idempotency_registry ir
-          join app.transactions t on t.id=ir.tx_id
-         where ir.idempotency_key=p_idempotency_key
-           and t.status='completed'
-         limit 1;
-      return;
-    end;
-  end if;
+  SELECT * INTO v_card FROM app.member_cards WHERE id=p_card_id FOR UPDATE;
+  IF NOT FOUND OR v_card.status <> 'active' THEN RAISE EXCEPTION 'CARD_NOT_FOUND_OR_INACTIVE'; END IF;
+  IF v_card.card_type NOT IN ('prepaid','corporate') THEN
+    RAISE EXCEPTION 'UNSUPPORTED_CARD_TYPE_FOR_RECHARGE';
+  END IF;
 
-  -- external order
-  if p_external_order_id is not null then
-    begin
-      insert into app.merchant_order_registry(merchant_id, external_order_id, tx_id)
-      values (null, p_external_order_id, v_tx_id);
-    exception when unique_violation then
-      return query
-        select t.id, t.tx_no, t.card_id, t.final_amount
-          from app.merchant_order_registry mo
-          join app.transactions t on t.id=mo.tx_id
-         where mo.merchant_id is null
-           and mo.external_order_id=p_external_order_id
-           and t.status='completed'
-         limit 1;
-      return;
-    end;
-  end if;
+  -- Idempotency
+  IF p_idempotency_key IS NOT NULL THEN
+    BEGIN
+      INSERT INTO app.idempotency_registry(idempotency_key, tx_id, created_at) VALUES (p_idempotency_key, v_tx_id, app.now_utc());
+    EXCEPTION WHEN unique_violation THEN
+      RETURN QUERY
+        SELECT t.id, t.tx_no, t.card_id, t.final_amount
+        FROM app.idempotency_registry ir
+        JOIN app.transactions t ON t.id = ir.tx_id
+        WHERE ir.idempotency_key = p_idempotency_key AND t.status='completed'
+        LIMIT 1;
+      RETURN;
+    END;
+  END IF;
 
-  select * into v_card from app.member_cards where id=p_card_id and status='active' for update;
-  if not found then raise exception 'CARD_NOT_FOUND_OR_INACTIVE'; end if;
+  -- External order optional map
+  IF p_external_order_id IS NOT NULL THEN
+    BEGIN
+      INSERT INTO app.merchant_order_registry(merchant_id, external_order_id, tx_id, created_at)
+      VALUES (NULL, p_external_order_id, v_tx_id, app.now_utc());
+    EXCEPTION WHEN unique_violation THEN
+      RETURN QUERY
+        SELECT t.id, t.tx_no, t.card_id, t.final_amount
+        FROM app.merchant_order_registry mo
+        JOIN app.transactions t ON t.id = mo.tx_id
+        WHERE mo.merchant_id IS NULL AND mo.external_order_id = p_external_order_id AND t.status='completed'
+        LIMIT 1;
+      RETURN;
+    END;
+  END IF;
 
   v_tx_no := app.gen_tx_no('recharge');
-  insert into app.tx_registry(tx_no, tx_id) values (v_tx_no, v_tx_id)
-  on conflict (tx_no) do nothing;
+  INSERT INTO app.tx_registry(tx_no, tx_id, created_at) VALUES (v_tx_no, v_tx_id, app.now_utc()) ON CONFLICT DO NOTHING;
 
-  insert into app.transactions(
-    id, tx_no, tx_type, card_id, merchant_id,
-    raw_amount, discount_applied, final_amount, points_earned, status,
-    reason, payment_method, external_order_id, idempotency_key, processed_by_user_id, tag
-  ) values (
-    v_tx_id, v_tx_no, 'recharge', p_card_id, null,
-    p_amount, 1.000, p_amount, 0, 'processing',
-    'user_recharge', p_payment_method, p_external_order_id, p_idempotency_key, auth.uid(), coalesce(p_tag,'{}'::jsonb)
-  );
+  INSERT INTO app.transactions(id, tx_no, card_id, card_type, merchant_id, tx_type,
+    raw_amount, discount_applied, final_amount, points_earned, status, tag, reason, payment_method, created_at)
+  VALUES (v_tx_id, v_tx_no, v_card.id, v_card.card_type, NULL, 'recharge',
+    p_amount, 1.000, p_amount, 0, 'processing', COALESCE(p_tag,'{}'::jsonb), 'recharge', p_payment_method, app.now_utc());
 
-  update app.member_cards set balance = balance + p_amount, updated_at=app.now_utc()
-   where id = p_card_id;
+  UPDATE app.member_cards SET balance = balance + p_amount, updated_at = app.now_utc() WHERE id = v_card.id;
 
-  update app.transactions set status='completed', updated_at=app.now_utc() where id=v_tx_id;
+  UPDATE app.transactions SET status='completed' WHERE id = v_tx_id;
 
-  insert into audit.event_log(action, object_type, object_id, context)
-  values ('RECHARGE', 'transaction', v_tx_id, jsonb_build_object('amount', p_amount, 'method', p_payment_method));
+  PERFORM audit.log('RECHARGE','transaction', v_tx_id, jsonb_build_object('amount', p_amount, 'method', p_payment_method));
 
-  return query select v_tx_id, v_tx_no, p_card_id, p_amount;
-end;
+  RETURN QUERY SELECT v_tx_id, v_tx_no, v_card.id, p_amount;
+END;
 $$;
 
--- 5) Points & Level
+-- =======================
+-- D) POINTS & LEVELS
+-- =======================
 
--- 5.1 update_points_and_level
-drop function if exists app.update_points_and_level(uuid, int, text);
-create or replace function app.update_points_and_level(
+DROP FUNCTION IF EXISTS app.update_points_and_level(uuid, int, text) CASCADE;
+CREATE OR REPLACE FUNCTION app.update_points_and_level(
   p_card_id uuid,
   p_delta_points int,
-  p_reason text default 'manual_adjust'
-) returns boolean
-language plpgsql
-security definer
-set search_path = app, audit, public
-as $$
-declare
-  v_card app.member_cards%rowtype;
-  v_before int;
-  v_after int;
-begin
-  select * into v_card from app.member_cards where id=p_card_id for update;
-  if not found then raise exception 'CARD_NOT_FOUND'; end if;
+  p_reason text DEFAULT 'manual_adjust'
+) RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_card app.member_cards%ROWTYPE;
+  v_new_points int;
+  v_new_level int;
+  v_new_disc numeric(4,3);
+BEGIN
+  PERFORM sec.fixed_search_path();
+  SELECT * INTO v_card FROM app.member_cards WHERE id=p_card_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'CARD_NOT_FOUND_OR_INACTIVE'; END IF;
+  IF v_card.card_type NOT IN ('standard','prepaid') THEN
+    RAISE EXCEPTION 'UNSUPPORTED_CARD_TYPE_FOR_POINTS';
+  END IF;
 
-  v_before := v_card.points;
-  v_after := greatest(0, v_card.points + p_delta_points);
+  v_new_points := GREATEST(0, v_card.points + p_delta_points);
+  v_new_level := app.compute_level(v_new_points);
+  v_new_disc  := app.compute_discount(v_new_points);
 
-  update app.member_cards
-     set points = v_after,
-         level  = app.compute_level(v_after),
-         discount = case when v_card.card_type in ('standard','prepaid')
-                         then app.compute_discount(v_after)
-                         else coalesce(fixed_discount, discount) end,
-         updated_at = app.now_utc()
-   where id = p_card_id;
+  UPDATE app.member_cards
+  SET points = v_new_points,
+      level = v_new_level,
+      discount_rate = v_new_disc,
+      updated_at = app.now_utc()
+  WHERE id = v_card.id;
 
-  insert into app.point_ledger(card_id, tx_id, change, balance_before, balance_after, reason, created_at)
-  values (p_card_id, null, p_delta_points, v_before, v_after, p_reason, app.now_utc());
+  INSERT INTO app.point_ledger(id, card_id, tx_id, change, balance_before, balance_after, reason, created_at)
+  VALUES (gen_random_uuid(), v_card.id, NULL, p_delta_points, v_card.points, v_new_points, p_reason, app.now_utc());
 
-  insert into audit.event_log(action, object_type, object_id, context)
-  values ('POINTS_ADJUST', 'member_card', p_card_id, jsonb_build_object('delta', p_delta_points));
-  return true;
-end;
+  PERFORM audit.log('POINTS_ADJUST','member_cards', v_card.id, jsonb_build_object('delta', p_delta_points, 'reason', p_reason));
+  RETURN TRUE;
+END;
 $$;
 
--- 6) Settlements & Reports
+-- =======================
+-- E) ADMIN & RISK
+-- =======================
 
--- 6.1 generate_settlement
-drop function if exists app.generate_settlement(uuid, app.settlement_mode, timestamptz, timestamptz);
-create or replace function app.generate_settlement(
+DROP FUNCTION IF EXISTS app.freeze_card(uuid) CASCADE;
+CREATE OR REPLACE FUNCTION app.freeze_card(
+  p_card_id uuid
+) RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  PERFORM sec.fixed_search_path();
+  UPDATE app.member_cards SET status='inactive', updated_at=app.now_utc() WHERE id=p_card_id;
+  PERFORM audit.log('CARD_FREEZE','member_cards', p_card_id, '{}'::jsonb);
+  RETURN TRUE;
+END;
+$$;
+
+DROP FUNCTION IF EXISTS app.unfreeze_card(uuid) CASCADE;
+CREATE OR REPLACE FUNCTION app.unfreeze_card(
+  p_card_id uuid
+) RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  PERFORM sec.fixed_search_path();
+  UPDATE app.member_cards SET status='active', updated_at=app.now_utc() WHERE id=p_card_id;
+  PERFORM audit.log('CARD_UNFREEZE','member_cards', p_card_id, '{}'::jsonb);
+  RETURN TRUE;
+END;
+$$;
+
+DROP FUNCTION IF EXISTS app.admin_suspend_member(uuid) CASCADE;
+CREATE OR REPLACE FUNCTION app.admin_suspend_member(
+  p_member_id uuid
+) RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  PERFORM sec.fixed_search_path();
+  UPDATE app.member_profiles SET status='suspended', updated_at=app.now_utc() WHERE id=p_member_id;
+  PERFORM audit.log('MEMBER_SUSPEND','member_profiles', p_member_id, '{}'::jsonb);
+  RETURN TRUE;
+END;
+$$;
+
+DROP FUNCTION IF EXISTS app.admin_suspend_merchant(uuid) CASCADE;
+CREATE OR REPLACE FUNCTION app.admin_suspend_merchant(
+  p_merchant_id uuid
+) RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  PERFORM sec.fixed_search_path();
+  UPDATE app.merchants SET active=false, updated_at=app.now_utc() WHERE id=p_merchant_id;
+  PERFORM audit.log('MERCHANT_SUSPEND','merchants', p_merchant_id, '{}'::jsonb);
+  RETURN TRUE;
+END;
+$$;
+
+-- =======================
+-- F) SETTLEMENTS & QUERIES
+-- =======================
+
+DROP FUNCTION IF EXISTS app.generate_settlement(uuid, app.settlement_mode, timestamptz, timestamptz) CASCADE;
+CREATE OR REPLACE FUNCTION app.generate_settlement(
   p_merchant_id uuid,
   p_mode app.settlement_mode,
   p_period_start timestamptz,
-  p_period_end timestamptz
-) returns uuid
-language plpgsql
-security definer
-set search_path = app, audit, public
-as $$
-declare
-  v_is_merch_user boolean;
-  v_settlement_id uuid := gen_random_uuid();
+  p_period_end   timestamptz
+) RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_id uuid := gen_random_uuid();
   v_total numeric(12,2);
-  v_count int;
-  v_payload jsonb;
-begin
-  if p_period_start is null or p_period_end is null or p_period_end <= p_period_start then
-    raise exception 'INVALID_PERIOD';
-  end if;
+  v_count bigint;
+BEGIN
+  PERFORM sec.fixed_search_path();
 
-  -- 呼叫者需為該商戶成員
-  select exists(select 1 from app.merchant_users where merchant_id=p_merchant_id and auth_user_id=auth.uid())
-    into v_is_merch_user;
-  if not v_is_merch_user then raise exception 'NOT_MERCHANT_USER'; end if;
+  SELECT COALESCE(SUM(CASE WHEN tx_type='payment' THEN final_amount ELSE -final_amount END),0),
+         COUNT(*)
+  INTO v_total, v_count
+  FROM app.transactions
+  WHERE merchant_id=p_merchant_id
+    AND created_at >= p_period_start AND created_at < p_period_end
+    AND status IN ('completed','refunded');
 
-  -- 計算淨額（payment - refund）
-  select coalesce(sum(
-           case when tx_type='payment' then final_amount
-                when tx_type='refund'  then -final_amount
-                else 0 end
-         ), 0) as total,
-         count(*)::int
-    into v_total, v_count
-  from app.transactions
-  where merchant_id = p_merchant_id
-    and created_at >= p_period_start
-    and created_at <  p_period_end
-    and status in ('completed','refunded');
+  INSERT INTO app.settlements(id, merchant_id, period_start, period_end, mode, total_amount, total_tx_count, status, created_at)
+  VALUES (v_id, p_merchant_id, p_period_start, p_period_end, p_mode, v_total, v_count, 'pending', app.now_utc());
 
-  -- payload：各類聚合（可擴充）
-  select jsonb_build_object(
-           'payments',   coalesce(sum(case when tx_type='payment' then final_amount else 0 end),0),
-           'refunds',    coalesce(sum(case when tx_type='refund'  then final_amount else 0 end),0),
-           'tx_count',   count(*)
-         )
-    into v_payload
-  from app.transactions
-  where merchant_id = p_merchant_id
-    and created_at >= p_period_start
-    and created_at <  p_period_end
-    and status in ('completed','refunded');
+  PERFORM audit.log('SETTLEMENT_GENERATE','settlements', v_id,
+    jsonb_build_object('merchant_id', p_merchant_id, 'total', v_total, 'count', v_count));
 
-  insert into app.settlements(id, merchant_id, mode, period_start, period_end, total_amount, total_tx_count, status, payload)
-  values (v_settlement_id, p_merchant_id, p_mode, p_period_start, p_period_end, v_total, v_count, 'pending', v_payload);
-
-  insert into audit.event_log(action, object_type, object_id, context)
-  values ('SETTLEMENT_GENERATE', 'settlement', v_settlement_id,
-          jsonb_build_object('merchant_id', p_merchant_id, 'mode', p_mode));
-
-  return v_settlement_id;
-end;
+  RETURN v_id;
+END;
 $$;
 
--- 6.2 list_settlements
-drop function if exists app.list_settlements(uuid, int, int);
-create or replace function app.list_settlements(
+DROP FUNCTION IF EXISTS app.list_settlements(uuid, integer, integer) CASCADE;
+CREATE OR REPLACE FUNCTION app.list_settlements(
   p_merchant_id uuid,
-  p_limit int default 50,
-  p_offset int default 0
-) returns table(id uuid, period_start timestamptz, period_end timestamptz, total_amount numeric, total_tx_count int, status app.settlement_status, created_at timestamptz)
-language sql
-security definer
-set search_path = app, audit, public
-as $$
-  select s.id, s.period_start, s.period_end, s.total_amount, s.total_tx_count, s.status, s.created_at
-    from app.settlements s
-   where s.merchant_id = p_merchant_id
-   order by s.period_start desc
-   limit p_limit offset p_offset
+  p_limit integer DEFAULT 50,
+  p_offset integer DEFAULT 0
+) RETURNS TABLE(id uuid, period_start timestamptz, period_end timestamptz, mode app.settlement_mode, total_amount numeric, total_tx_count bigint, status text, created_at timestamptz)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  PERFORM sec.fixed_search_path();
+  RETURN QUERY
+  SELECT s.id, s.period_start, s.period_end, s.mode, s.total_amount, s.total_tx_count, s.status, s.created_at
+  FROM app.settlements s
+  WHERE s.merchant_id = p_merchant_id
+  ORDER BY s.created_at DESC
+  LIMIT p_limit OFFSET p_offset;
+END;
 $$;
 
--- 6.3 get_member_transactions
-drop function if exists app.get_member_transactions(uuid, int, int, timestamptz, timestamptz);
-create or replace function app.get_member_transactions(
+DROP FUNCTION IF EXISTS app.get_member_transactions(uuid, integer, integer, timestamptz, timestamptz) CASCADE;
+CREATE OR REPLACE FUNCTION app.get_member_transactions(
   p_member_id uuid,
-  p_limit int default 50,
-  p_offset int default 0,
-  p_start_date timestamptz default null,
-  p_end_date   timestamptz default null
-) returns table(
-  id uuid, tx_no text, tx_type app.tx_type, card_id uuid, merchant_id uuid,
-  final_amount numeric, status app.tx_status, created_at timestamptz, total_count bigint
-)
-language plpgsql
-security definer
-set search_path = app, audit, public
-as $$
-declare
-  v_where text := '';
-begin
-  v_where := ' where card_id in (select id from app.member_cards where owner_member_id = '||quote_literal(p_member_id)||' or id in (select card_id from app.card_bindings where member_id = '||quote_literal(p_member_id)||'))';
-  if p_start_date is not null then
-    v_where := v_where || ' and created_at >= '||quote_literal(p_start_date);
-  end if;
-  if p_end_date is not null then
-    v_where := v_where || ' and created_at < '||quote_literal(p_end_date);
-  end if;
-
-  return query execute format(
-    'select id, tx_no, tx_type, card_id, merchant_id, final_amount, status, created_at, count(*) over() as total_count
-       from app.transactions %s
-      order by created_at desc
-      limit %s offset %s', v_where, p_limit, p_offset
-  );
-end;
+  p_limit integer DEFAULT 50,
+  p_offset integer DEFAULT 0,
+  p_start_date timestamptz DEFAULT NULL,
+  p_end_date   timestamptz DEFAULT NULL
+) RETURNS TABLE(id uuid, tx_no text, tx_type app.tx_type, card_id uuid, merchant_id uuid, final_amount numeric, status app.tx_status, created_at timestamptz, total_count bigint)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_where text := ' WHERE 1=1 ';
+BEGIN
+  PERFORM sec.fixed_search_path();
+  RETURN QUERY
+  WITH cte AS (
+    SELECT t.* FROM app.transactions t
+    JOIN app.member_cards c ON c.id = t.card_id
+    WHERE c.member_owner_id = p_member_id
+      AND (p_start_date IS NULL OR t.created_at >= p_start_date)
+      AND (p_end_date   IS NULL OR t.created_at <  p_end_date)
+  )
+  SELECT id, tx_no, tx_type, card_id, merchant_id, final_amount, status, created_at,
+         COUNT(*) OVER() AS total_count
+  FROM cte
+  ORDER BY created_at DESC
+  LIMIT p_limit OFFSET p_offset;
+END;
 $$;
 
--- 6.4 get_merchant_transactions
-drop function if exists app.get_merchant_transactions(uuid, int, int, timestamptz, timestamptz);
-create or replace function app.get_merchant_transactions(
+DROP FUNCTION IF EXISTS app.get_merchant_transactions(uuid, integer, integer, timestamptz, timestamptz) CASCADE;
+CREATE OR REPLACE FUNCTION app.get_merchant_transactions(
   p_merchant_id uuid,
-  p_limit int default 50,
-  p_offset int default 0,
-  p_start_date timestamptz default null,
-  p_end_date   timestamptz default null
-) returns table(
-  id uuid, tx_no text, tx_type app.tx_type, card_id uuid, final_amount numeric,
-  status app.tx_status, created_at timestamptz, total_count bigint
-)
-language plpgsql
-security definer
-set search_path = app, audit, public
-as $$
-declare
-  v_where text := ' where merchant_id = '||quote_literal(p_merchant_id);
-begin
-  if p_start_date is not null then
-    v_where := v_where || ' and created_at >= '||quote_literal(p_start_date);
-  end if;
-  if p_end_date is not null then
-    v_where := v_where || ' and created_at < '||quote_literal(p_end_date);
-  end if;
-
-  return query execute format(
-    'select id, tx_no, tx_type, card_id, final_amount, status, created_at, count(*) over() as total_count
-       from app.transactions %s
-      order by created_at desc
-      limit %s offset %s', v_where, p_limit, p_offset
-  );
-end;
+  p_limit integer DEFAULT 50,
+  p_offset integer DEFAULT 0,
+  p_start_date timestamptz DEFAULT NULL,
+  p_end_date   timestamptz DEFAULT NULL
+) RETURNS TABLE(id uuid, tx_no text, tx_type app.tx_type, card_id uuid, final_amount numeric, status app.tx_status, created_at timestamptz, total_count bigint)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  PERFORM sec.fixed_search_path();
+  RETURN QUERY
+  WITH cte AS (
+    SELECT t.* FROM app.transactions t
+    WHERE t.merchant_id = p_merchant_id
+      AND (p_start_date IS NULL OR t.created_at >= p_start_date)
+      AND (p_end_date   IS NULL OR t.created_at <  p_end_date)
+  )
+  SELECT id, tx_no, tx_type, card_id, final_amount, status, created_at,
+         COUNT(*) OVER() AS total_count
+  FROM cte
+  ORDER BY created_at DESC
+  LIMIT p_limit OFFSET p_offset;
+END;
 $$;
 
--- 6.5 get_transaction_detail
-drop function if exists app.get_transaction_detail(text);
-create or replace function app.get_transaction_detail(
+DROP FUNCTION IF EXISTS app.get_transaction_detail(text) CASCADE;
+CREATE OR REPLACE FUNCTION app.get_transaction_detail(
   p_tx_no text
-) returns app.transactions
-language sql
-security definer
-set search_path = app, audit, public
-as $$
-  select * from app.transactions where tx_no = p_tx_no limit 1
-$$;
-
--- 7) Card / Member / Merchant admin helpers
-
--- 7.1 freeze_card / unfreeze_card
-drop function if exists app.freeze_card(uuid);
-create or replace function app.freeze_card(p_card_id uuid)
-returns boolean
-language sql
-security definer
-set search_path = app, audit, public
-as $$
-  update app.member_cards set status='suspended', updated_at=app.now_utc()
-   where id = p_card_id;
-  select true
-$$;
-
-drop function if exists app.unfreeze_card(uuid);
-create or replace function app.unfreeze_card(p_card_id uuid)
-returns boolean
-language sql
-security definer
-set search_path = app, audit, public
-as $$
-  update app.member_cards set status='active', updated_at=app.now_utc()
-   where id = p_card_id;
-  select true
-$$;
-
--- 7.2 admin_suspend_member / admin_suspend_merchant
-drop function if exists app.admin_suspend_member(uuid);
-create or replace function app.admin_suspend_member(p_member_id uuid)
-returns boolean
-language sql
-security definer
-set search_path = app, audit, public
-as $$
-  update app.member_profiles set status='suspended', updated_at=app.now_utc()
-   where id = p_member_id;
-  select true
-$$;
-
-drop function if exists app.admin_suspend_merchant(uuid);
-create or replace function app.admin_suspend_merchant(p_merchant_id uuid)
-returns boolean
-language sql
-security definer
-set search_path = app, audit, public
-as $$
-  update app.merchants set status='inactive', updated_at=app.now_utc()
-   where id = p_merchant_id;
-  select true
+) RETURNS app.transactions
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_tx app.transactions%ROWTYPE;
+BEGIN
+  PERFORM sec.fixed_search_path();
+  SELECT * INTO v_tx FROM app.transactions WHERE tx_no = p_tx_no;
+  IF NOT FOUND THEN RAISE EXCEPTION 'TX_NOT_FOUND'; END IF;
+  RETURN v_tx;
+END;
 $$;
 
 -- ============================================================================
--- END OF RPCs
+-- END OF FILE
 -- ============================================================================

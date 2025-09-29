@@ -1,9 +1,11 @@
 -- ============================================================================
--- Member Payment System (MPS) - SCHEMA ONLY (WITH QR TABLES, NO RPCs)
--- Includes: external identities table, stricter constraints, helpful indexes,
---           and card_no auto-generation trigger.
--- This script DROPs and RECREATEs all objects in schemas app, audit.
--- Target: Supabase/PostgreSQL
+-- Member Payment System (MPS) - SCHEMA ONLY (補強版)
+-- 包含 QR TABLES, external identities, stricter constraints, helpful indexes,
+-- card_no auto-generation trigger, 並新增：
+--   1. member_cards.binding_password_hash
+--   2. transactions.refund index
+--   3. settlement_status enum 增加 'paid'
+--   4. audit.event_log 增加 object 索引
 -- ============================================================================
 
 -- 0) SCHEMAS (drop & create)
@@ -23,7 +25,7 @@ do $$ begin create type app.tx_status as enum ('processing','completed','failed'
 do $$ begin create type app.pay_method as enum ('balance','cash','wechat','alipay'); exception when duplicate_object then null; end $$;
 do $$ begin create type app.bind_role as enum ('owner','admin','member','viewer'); exception when duplicate_object then null; end $$;
 do $$ begin create type app.member_status as enum ('active','inactive','suspended','deleted'); exception when duplicate_object then null; end $$;
-do $$ begin create type app.settlement_status as enum ('pending','settled','failed'); exception when duplicate_object then null; end $$;
+do $$ begin create type app.settlement_status as enum ('pending','settled','failed','paid'); exception when duplicate_object then null; end $$;
 do $$ begin create type app.settlement_mode as enum ('realtime','t_plus_1','monthly'); exception when duplicate_object then null; end $$;
 
 comment on type app.bind_role is 'Card-level role: owner/admin/member/viewer';
@@ -76,7 +78,6 @@ create table app.member_profiles (
   name text not null,
   phone text unique,
   email text unique,
-  -- optional default binding for simple apps
   binding_user_org text,
   binding_org_id  text,
   role text not null default 'member',
@@ -125,6 +126,7 @@ create table app.member_cards (
   level int,
   discount numeric(4,3) not null default 1.000,
   fixed_discount numeric(4,3),
+  binding_password_hash text,
   status app.card_status not null default 'active',
   expires_at timestamptz,
   created_at timestamptz not null default app.now_utc(),
@@ -154,7 +156,6 @@ create table app.card_bindings (
   card_id uuid not null references app.member_cards(id) on delete cascade,
   member_id uuid not null references app.member_profiles(id) on delete cascade,
   role app.bind_role not null default 'member',
-  binding_password_hash text,
   created_at timestamptz not null default app.now_utc(),
   unique (card_id, member_id)
 );
@@ -249,6 +250,7 @@ create index idx_tx_status on app.transactions(status);
 create index idx_tx_type_time on app.transactions(tx_type, created_at desc);
 create index idx_tx_created_at on app.transactions(created_at);
 create index idx_tx_tag_gin on app.transactions using gin(tag);
+create index idx_tx_original on app.transactions(original_tx_id);
 
 create table app.point_ledger (
   id uuid primary key default gen_random_uuid(),
@@ -287,6 +289,7 @@ create table audit.event_log (
   object_id uuid,
   context jsonb not null default '{}'::jsonb
 );
+create index idx_event_object on audit.event_log(object_type, object_id);
 
 -- 9) TRIGGERS (only updated_at maintenance)
 create trigger trg_member_profiles_updated_at
@@ -337,4 +340,4 @@ insert into app.membership_levels(level, name, min_points, max_points, discount,
   (3, '鑽石會員', 10000, null, 0.850, true)
 on conflict do nothing;
 
--- End of SCHEMA ONLY
+-- End of SCHEMA ONLY (補強版)
