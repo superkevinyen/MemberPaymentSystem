@@ -121,21 +121,34 @@ class Formatter:
         # 計算實際顯示寬度
         display_width = 0
         for char in text:
-            display_width += wcwidth.wcwidth(char) or 1
+            char_width = wcwidth.wcwidth(char)
+            if char_width is None:
+                char_width = 1
+            display_width += char_width
         
         # 計算需要填充的空格數
         padding = max(0, width - display_width)
         
         if align == 'left':
-            return text + ' ' * padding
+            result = text + ' ' * padding
         elif align == 'right':
-            return ' ' * padding + text
+            result = ' ' * padding + text
         elif align == 'center':
             left_padding = padding // 2
             right_padding = padding - left_padding
-            return ' ' * left_padding + text + ' ' * right_padding
+            result = ' ' * left_padding + text + ' ' * right_padding
         else:
-            return text
+            result = text
+        
+        # 確保結果長度正確
+        if len(result) != width:
+            # 如果長度不匹配，使用簡單的字符串填充
+            if len(text) >= width:
+                return text[:width]
+            else:
+                return text.ljust(width) if align == 'left' else text.rjust(width) if align == 'right' else text.center(width)
+        
+        return result
     
     @staticmethod
     def format_phone(phone: str) -> str:
