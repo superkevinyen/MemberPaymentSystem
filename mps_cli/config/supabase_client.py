@@ -18,7 +18,8 @@ class SupabaseClient:
     def _initialize_client(self):
         """初始化 Supabase 客戶端"""
         try:
-            self.client = create_client(self.url, self.service_role_key)
+            # 使用 anon_key 創建客戶端（訪問 public schema）
+            self.client = create_client(self.url, self.anon_key)
             logger.info("Supabase 客戶端初始化成功")
         except Exception as e:
             logger.error(f"Supabase 客戶端初始化失敗: {e}")
@@ -51,6 +52,7 @@ class SupabaseClient:
             raise Exception("Supabase 客戶端未初始化")
         
         try:
+            # 直接查詢 public schema 中的表
             return self.client.table(table)
         except Exception as e:
             logger.error(f"查詢表格失敗: {table}, 錯誤: {e}")
@@ -127,10 +129,14 @@ class SupabaseClient:
     def test_connection(self) -> bool:
         """測試連接"""
         try:
-            # 嘗試查詢一個簡單的表來測試連接
-            self.select("member_profiles", "id", limit=1)
-            logger.info("Supabase 連接測試成功")
-            return True
+            # 使用 RPC 函數測試連接
+            result = self.rpc("test_connection", {})
+            if result and result.get('status') == 'success':
+                logger.info("Supabase 連接測試成功")
+                return True
+            else:
+                logger.error("Supabase 連接測試失敗: 無效的響應")
+                return False
         except Exception as e:
             logger.error(f"Supabase 連接測試失敗: {e}")
             return False

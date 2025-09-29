@@ -172,14 +172,16 @@ def test_connection():
             
             # 顯示基本統計
             try:
-                members_count = supabase_client.select("member_profiles", "id")
-                cards_count = supabase_client.select("member_cards", "id")
-                merchants_count = supabase_client.select("merchants", "id")
-                
-                print(f"📊 系統概況:")
-                print(f"  會員數量: {len(members_count)}")
-                print(f"  卡片數量: {len(cards_count)}")
-                print(f"  商戶數量: {len(merchants_count)}")
+                result = supabase_client.rpc("test_connection", {})
+                if result and result.get('stats'):
+                    stats = result['stats']
+                    print(f"📊 系統概況:")
+                    print(f"  會員數量: {stats.get('members', 0)}")
+                    print(f"  卡片數量: {stats.get('cards', 0)}")
+                    print(f"  商戶數量: {stats.get('merchants', 0)}")
+                    print(f"  測試時間: {result.get('timestamp', 'N/A')}")
+                else:
+                    print("⚠️  無法獲取統計信息")
                 
             except Exception as e:
                 print(f"⚠️  無法獲取統計信息: {e}")

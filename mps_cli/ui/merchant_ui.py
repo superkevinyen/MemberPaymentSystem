@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Dict, List
 from services.merchant_service import MerchantService
 from services.payment_service import PaymentService
 from services.qr_service import QRService

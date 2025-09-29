@@ -29,11 +29,12 @@ class BaseService(ABC):
             self.logger.error(f"RPC 調用失敗: {function_name}, 錯誤: {e}")
             raise self.error_handler.handle_rpc_error(e)
     
-    def query_table(self, table: str, filters: Optional[Dict] = None, 
+    def query_table(self, table: str, filters: Optional[Dict] = None,
                    limit: Optional[int] = None, offset: Optional[int] = None,
                    order_by: Optional[str] = None, ascending: bool = True) -> List[Dict]:
         """查詢表格數據"""
         try:
+            # 直接使用表名（public schema）
             self.logger.debug(f"查詢表格: {table}, 過濾條件: {filters}")
             
             query = self.client.query(table).select("*")
@@ -204,7 +205,7 @@ class QueryService(BaseService):
             }
         }
     
-    def search_records(self, table: str, search_fields: List[str], 
+    def search_records(self, table: str, search_fields: List[str],
                       keyword: str, limit: int = 50) -> List[Dict]:
         """搜索記錄"""
         if not keyword:

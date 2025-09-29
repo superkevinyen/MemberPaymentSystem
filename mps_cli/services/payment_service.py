@@ -1,4 +1,4 @@
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from decimal import Decimal
 from .base_service import BaseService
 from models.transaction import Transaction

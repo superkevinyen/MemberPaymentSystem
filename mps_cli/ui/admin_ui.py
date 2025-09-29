@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Dict, List
 from services.admin_service import AdminService
 from services.member_service import MemberService
 from services.qr_service import QRService
