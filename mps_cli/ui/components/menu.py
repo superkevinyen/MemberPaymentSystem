@@ -63,11 +63,11 @@ class Menu:
                 choice_num = int(choice)
                 if 1 <= choice_num <= len(self.options):
                     return choice_num
-                print(f"❌ 請選擇 1-{len(self.options)}")
+                print(f"✗ 請選擇 1-{len(self.options)}")
             except ValueError:
-                print("❌ 請輸入有效數字")
+                print("✗ 請輸入有效數字")
             except KeyboardInterrupt:
-                print("\n👋 再見！")
+                print("\n▸ 再見！")
                 exit(0)
     
     def run(self):
@@ -85,7 +85,7 @@ class Menu:
                     break
                     
             except Exception as e:
-                print(f"❌ 操作失敗: {e}")
+                print(f"✗ 操作失敗: {e}")
                 input("按任意鍵繼續...")
 
 class SimpleMenu:
@@ -103,11 +103,11 @@ class SimpleMenu:
                 choice = int(input(f"請選擇 (1-{len(options)}): "))
                 if 1 <= choice <= len(options):
                     return choice
-                print(f"❌ 請選擇 1-{len(options)}")
+                print(f"✗ 請選擇 1-{len(options)}")
             except ValueError:
-                print("❌ 請輸入有效數字")
+                print("✗ 請輸入有效數字")
             except KeyboardInterrupt:
-                print("\n👋 再見！")
+                print("\n▸ 再見！")
                 exit(0)
     
     @staticmethod
@@ -126,9 +126,9 @@ class SimpleMenu:
         """顯示消息"""
         icons = {
             "info": "ℹ️",
-            "success": "✅", 
+            "success": "▸", 
             "warning": "⚠️",
-            "error": "❌"
+            "error": "✗"
         }
         
         icon = icons.get(message_type, "ℹ️")
@@ -143,7 +143,7 @@ class SimpleMenu:
         try:
             input(message)
         except KeyboardInterrupt:
-            print("\n👋 再見！")
+            print("\n▸ 再見！")
             exit(0)
 
 class ProgressMenu:
@@ -161,9 +161,9 @@ class ProgressMenu:
         
         for i, step in enumerate(self.steps):
             if i < self.current_step:
-                print(f"✅ {step}")
+                print(f"▸ {step}")
             elif i == self.current_step:
-                print(f"🔄 {step}")
+                print(f"⋯ {step}")
             else:
                 print(f"⏳ {step}")
         

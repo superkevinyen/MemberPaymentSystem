@@ -58,7 +58,7 @@ def main():
             BaseUI.show_goodbye()
             
     except KeyboardInterrupt:
-        print("\n👋 再見！")
+        print("\n▸ 再見！")
         logger.info("用戶中斷程序")
     except Exception as e:
         BaseUI.show_error(f"系統錯誤: {e}")
@@ -71,24 +71,24 @@ def show_welcome():
     """顯示歡迎界面"""
     BaseUI.show_welcome("MPS 系統")
     
-    print("🎯 功能特色:")
-    print("  • 👤 會員用戶：查看卡片、生成 QR 碼、充值")
-    print("  • 🏪 商戶用戶：掃碼收款、退款處理")
-    print("  • 👨‍💼 管理員：會員管理、卡片管理")
+    print("▸ 系統功能")
+    print("  ├─ MEMBER    會員用戶：查看卡片、生成 QR 碼、充值")
+    print("  ├─ MERCHANT  商戶用戶：掃碼收款、退款處理")
+    print("  └─ ADMIN     管理員：會員管理、卡片管理")
     print()
 
 def select_role() -> str:
     """選擇用戶角色"""
     roles = {
-        "1": ("member", "會員用戶", "👤"),
-        "2": ("merchant", "商戶用戶", "🏪"), 
-        "3": ("admin", "管理員", "👨‍💼"),
-        "4": ("exit", "退出系統", "🚪")
+        "1": ("member", "會員用戶", "[MEMBER]"),
+        "2": ("merchant", "商戶用戶", "[MERCHANT]"), 
+        "3": ("admin", "管理員", "[ADMIN]"),
+        "4": ("exit", "退出系統", "[EXIT]")
     }
     
-    print("請選擇您的角色:")
-    for key, (role, name, icon) in roles.items():
-        print(f"  {key}. {icon} {name}")
+    print("▸ 請選擇您的角色")
+    for key, (role, name, prefix) in roles.items():
+        print(f"  {key}. {prefix:<12} {name}")
     
     while True:
         try:
@@ -99,7 +99,7 @@ def select_role() -> str:
                 if selected_role == "exit":
                     return "exit"
                 
-                print(f"\n{icon} 您選擇了：{role_name}")
+                print(f"\n▸ 您選擇了：{role_name}")
                 
                 # 確認選擇
                 if BaseUI.confirm_action("確認進入？", True):
@@ -108,7 +108,7 @@ def select_role() -> str:
                 else:
                     print()  # 重新選擇
             else:
-                print("❌ 請選擇 1-4")
+                print("✗ 請選擇 1-4")
         except KeyboardInterrupt:
             return "exit"
 
@@ -168,28 +168,28 @@ def test_connection():
         print("正在測試數據庫連接...")
         
         if supabase_client.test_connection():
-            print("✅ 數據庫連接成功")
+            print("▸ 數據庫連接成功")
             
             # 顯示基本統計
             try:
                 result = supabase_client.rpc("test_connection", {})
                 if result and result.get('stats'):
                     stats = result['stats']
-                    print(f"📊 系統概況:")
+                    print(f"▸ 系統概況:")
                     print(f"  會員數量: {stats.get('members', 0)}")
                     print(f"  卡片數量: {stats.get('cards', 0)}")
                     print(f"  商戶數量: {stats.get('merchants', 0)}")
                     print(f"  測試時間: {result.get('timestamp', 'N/A')}")
                 else:
-                    print("⚠️  無法獲取統計信息")
+                    print("! 無法獲取統計信息")
                 
             except Exception as e:
-                print(f"⚠️  無法獲取統計信息: {e}")
+                print(f"! 無法獲取統計信息: {e}")
         else:
-            print("❌ 數據庫連接失敗")
+            print("✗ 數據庫連接失敗")
             
     except Exception as e:
-        print(f"❌ 連接測試失敗: {e}")
+        print(f"✗ 連接測試失敗: {e}")
 
 def show_help():
     """顯示幫助信息"""
@@ -229,7 +229,7 @@ if __name__ == "__main__":
         elif command in ["help", "-h", "--help"]:
             show_help()
         else:
-            print(f"❌ 未知命令: {command}")
+            print(f"✗ 未知命令: {command}")
             print("使用 'python main.py help' 查看幫助信息")
     else:
         main()

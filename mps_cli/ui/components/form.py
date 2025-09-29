@@ -47,15 +47,15 @@ class Form:
                 
                 # 檢查必填項
                 if field.required and not value:
-                    print(f"❌ {field.label} 為必填項")
+                    print(f"✗ {field.label} 為必填項")
                     continue
                 
                 # 如果有值，進行驗證
                 if value and field.validator:
                     if not field.validator(value):
-                        print(f"❌ {field.label} 格式不正確")
+                        print(f"✗ {field.label} 格式不正確")
                         if field.help_text:
-                            print(f"💡 {field.help_text}")
+                            print(f"▸ {field.help_text}")
                         continue
                 
                 data[field.name] = value
@@ -74,7 +74,7 @@ class Form:
         prompt += ": "
         
         if field.help_text:
-            print(f"💡 {field.help_text}")
+            print(f"▸ {field.help_text}")
         
         if field.field_type == "select":
             return self._get_select_value(field)
@@ -109,9 +109,9 @@ class Form:
                 choice = int(choice_input)
                 if 1 <= choice <= len(field.options):
                     return field.options[choice - 1]
-                print(f"❌ 請選擇 1-{len(field.options)}")
+                print(f"✗ 請選擇 1-{len(field.options)}")
             except ValueError:
-                print("❌ 請輸入有效數字")
+                print("✗ 請輸入有效數字")
     
     def _get_number_value(self, field: FormField) -> Optional[int]:
         """獲取數字值"""
@@ -124,7 +124,7 @@ class Form:
                     continue
                 return int(value)
             except ValueError:
-                print("❌ 請輸入有效的整數")
+                print("✗ 請輸入有效的整數")
     
     def _get_decimal_value(self, field: FormField) -> Optional[float]:
         """獲取小數值"""
@@ -137,7 +137,7 @@ class Form:
                     continue
                 return float(value)
             except ValueError:
-                print("❌ 請輸入有效的數字")
+                print("✗ 請輸入有效的數字")
     
     def _get_boolean_value(self, field: FormField) -> bool:
         """獲取布爾值"""
@@ -151,7 +151,7 @@ class Form:
             elif value in ['n', 'no', '否', '0', 'false']:
                 return False
             else:
-                print("❌ 請輸入 y/n")
+                print("✗ 請輸入 y/n")
     
     def _get_date_value(self, field: FormField) -> Optional[str]:
         """獲取日期值"""
@@ -165,7 +165,7 @@ class Form:
             if self.validator.validate_date_string(value):
                 return value
             else:
-                print("❌ 請輸入有效的日期格式 (YYYY-MM-DD)")
+                print("✗ 請輸入有效的日期格式 (YYYY-MM-DD)")
 
 class QuickForm:
     """快速表單組件"""
@@ -183,16 +183,16 @@ class QuickForm:
                 amount = float(amount_str)
                 
                 if amount < min_amount:
-                    print(f"❌ 金額不能小於 ¥{min_amount:.2f}")
+                    print(f"✗ 金額不能小於 ¥{min_amount:.2f}")
                     continue
                 if amount > max_amount:
-                    print(f"❌ 金額不能超過 ¥{max_amount:.2f}")
+                    print(f"✗ 金額不能超過 ¥{max_amount:.2f}")
                     continue
                 
                 return amount
                 
             except ValueError:
-                print("❌ 請輸入有效的數字")
+                print("✗ 請輸入有效的數字")
             except KeyboardInterrupt:
                 raise
     
@@ -203,11 +203,11 @@ class QuickForm:
             qr_code = input(f"{prompt}: ").strip()
             
             if not qr_code:
-                print("❌ QR 碼不能為空")
+                print("✗ QR 碼不能為空")
                 continue
             
             if len(qr_code) < 16:
-                print("❌ QR 碼格式不正確（長度不足）")
+                print("✗ QR 碼格式不正確（長度不足）")
                 continue
             
             return qr_code
@@ -239,9 +239,9 @@ class QuickForm:
                 choice = int(choice_input)
                 if 1 <= choice <= len(choices):
                     return choice
-                print(f"❌ 請選擇 1-{len(choices)}")
+                print(f"✗ 請選擇 1-{len(choices)}")
             except ValueError:
-                print("❌ 請輸入有效數字")
+                print("✗ 請輸入有效數字")
     
     @staticmethod
     def get_text(prompt: str, required: bool = True, 
@@ -249,19 +249,19 @@ class QuickForm:
                  help_text: Optional[str] = None) -> str:
         """獲取文本輸入"""
         if help_text:
-            print(f"💡 {help_text}")
+            print(f"▸ {help_text}")
         
         while True:
             value = input(f"{prompt}: ").strip()
             
             if required and not value:
-                print("❌ 此項為必填")
+                print("✗ 此項為必填")
                 continue
             
             if value and validator and not validator(value):
-                print("❌ 輸入格式不正確")
+                print("✗ 輸入格式不正確")
                 if help_text:
-                    print(f"💡 {help_text}")
+                    print(f"▸ {help_text}")
                 continue
             
             return value
@@ -321,7 +321,7 @@ class WizardForm:
             self.current_step += 1
         
         if self.current_step >= len(self.steps):
-            print("\n✅ 嚮導完成！")
+            print("\n▸ 嚮導完成！")
             self._show_summary()
         
         return self.data

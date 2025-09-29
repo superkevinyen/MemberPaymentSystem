@@ -35,7 +35,7 @@ class MemberUI:
             self._show_main_menu()
             
         except KeyboardInterrupt:
-            print("\n👋 再見！")
+            print("\n▸ 再見！")
         except Exception as e:
             BaseUI.show_error(f"系統錯誤: {e}")
         finally:
@@ -461,8 +461,8 @@ class MemberUI:
                 choice = int(input(f"請選擇 (1-{len(cards)}): "))
                 if 1 <= choice <= len(cards):
                     return cards[choice - 1]
-                print(f"❌ 請選擇 1-{len(cards)}")
+                print(f"✗ 請選擇 1-{len(cards)}")
             except ValueError:
-                print("❌ 請輸入有效數字")
+                print("✗ 請輸入有效數字")
             except KeyboardInterrupt:
                 return None

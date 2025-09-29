@@ -30,7 +30,7 @@ class AdminUI:
             self._show_main_menu()
             
         except KeyboardInterrupt:
-            print("\n👋 再見！")
+            print("\n▸ 再見！")
         except Exception as e:
             BaseUI.show_error(f"系統錯誤: {e}")
         finally:
@@ -497,7 +497,7 @@ class AdminUI:
                     
                     break
                 except ValueError:
-                    print("❌ 請輸入有效的整數")
+                    print("✗ 請輸入有效的整數")
             
             reason = input("請輸入調整原因: ").strip() or "manual_adjust"
             
@@ -665,7 +665,7 @@ class AdminUI:
             BaseUI.clear_screen()
             BaseUI.show_header("批量輪換 QR 碼")
             
-            print("⚠️  此操作將輪換所有激活的預付卡和企業卡的 QR 碼")
+            print("!  此操作將輪換所有激活的預付卡和企業卡的 QR 碼")
             print("   輪換後，舊的 QR 碼將立即失效")
             
             # 輸入 TTL 秒數
@@ -674,9 +674,9 @@ class AdminUI:
                     ttl_seconds = int(input("請輸入新 QR 碼有效期 (秒，建議 300-3600): "))
                     if 60 <= ttl_seconds <= 7200:  # 1分鐘到2小時
                         break
-                    print("❌ 有效期應在 60-7200 秒之間")
+                    print("✗ 有效期應在 60-7200 秒之間")
                 except ValueError:
-                    print("❌ 請輸入有效的整數")
+                    print("✗ 請輸入有效的整數")
             
             # 確認操作
             ttl_minutes = ttl_seconds // 60

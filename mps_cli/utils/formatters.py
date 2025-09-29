@@ -102,7 +102,12 @@ class Formatter:
         result = ""
         
         for char in text:
-            char_width = wcwidth.wcwidth(char) or 1
+            try:
+                char_width = wcwidth.wcwidth(char) or 1
+            except (TypeError, ValueError):
+                # 處理複合 emoji 或特殊字符
+                char_width = 2
+            
             if current_width + char_width > max_length:
                 if current_width + 3 <= max_length:
                     result += "..."
@@ -114,17 +119,21 @@ class Formatter:
     
     @staticmethod
     def pad_text(text: str, width: int, align: str = 'left') -> str:
-        """填充文本到指定寬度，考慮中文字符"""
+        """填充文本到指定寬度，考慮中文字符和複合 emoji"""
         if not text:
             text = ""
         
-        # 計算實際顯示寬度
+        # 計算實際顯示寬度，安全處理複合字符
         display_width = 0
         for char in text:
-            char_width = wcwidth.wcwidth(char)
-            if char_width is None:
-                char_width = 1
-            display_width += char_width
+            try:
+                char_width = wcwidth.wcwidth(char)
+                if char_width is None:
+                    char_width = 1
+                display_width += char_width
+            except (TypeError, ValueError):
+                # 處理複合 emoji 或特殊字符
+                display_width += 2  # 假設複合字符寬度為 2
         
         # 計算需要填充的空格數
         padding = max(0, width - display_width)
@@ -192,10 +201,10 @@ class Formatter:
             return "0"
         
         level_names = {
-            0: "普通",
-            1: "銀卡", 
-            2: "金卡",
-            3: "鑽石"
+            0: "Regular",
+            1: "Silver",
+            2: "Gold",
+            3: "Diamond"
         }
         
         return level_names.get(level, str(level))
@@ -204,17 +213,17 @@ class Formatter:
     def format_discount(discount: float) -> str:
         """格式化折扣"""
         if discount is None:
-            return "無折扣"
+            return "No Discount"
         
         if discount >= 1.0:
-            return "無折扣"
+            return "No Discount"
         
-        return f"{discount * 100:.1f}折"
+        return f"{discount * 100:.1f}% Off"
     
     @staticmethod
     def format_boolean(value: bool) -> str:
         """格式化布爾值"""
-        return "是" if value else "否"
+        return "Yes" if value else "No"
     
     @staticmethod
     def format_list(items: list, separator: str = ", ") -> str:

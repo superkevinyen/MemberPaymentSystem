@@ -54,11 +54,11 @@ class BaseUI:
                 choice = int(input(f"請選擇 (1-{len(options)}): "))
                 if 1 <= choice <= len(options):
                     return choice
-                print(f"❌ 請選擇 1-{len(options)}")
+                print(f"✗ 請選擇 1-{len(options)}")
             except ValueError:
-                print("❌ 請輸入有效數字")
+                print("✗ 請輸入有效數字")
             except KeyboardInterrupt:
-                print("\n👋 再見！")
+                print("\n▸ 再見！")
                 exit(0)
     
     @staticmethod
@@ -74,28 +74,27 @@ class BaseUI:
     
     @staticmethod
     def show_success(message: str, details: Optional[Dict[str, Any]] = None):
-        """顯示成功信息"""
-        print(f"\n✅ {message}")
+        """顯示成功信息 - Claude Code 風格"""
+        print(f"\n▸ {message}")
         if details:
             for key, value in details.items():
-                print(f"   {key}: {value}")
+                print(f"  {key}: {value}")
     
     @staticmethod
     def show_error(message: str, suggestion: Optional[str] = None):
-        """顯示錯誤信息"""
-        print(f"\n❌ {message}")
+        """顯示錯誤信息 - Claude Code 風格"""
+        print(f"\n✗ {message}")
         if suggestion:
-            print(f"💡 建議：{suggestion}")
-    
+            print(f"  建議：{suggestion}")    
     @staticmethod
     def show_warning(message: str):
-        """顯示警告信息"""
-        print(f"\n⚠️  {message}")
+        """顯示警告信息 - Claude Code 風格"""
+        print(f"\n! {message}")
     
     @staticmethod
     def show_info(message: str):
-        """顯示信息"""
-        print(f"\nℹ️  {message}")
+        """顯示信息 - Claude Code 風格"""
+        print(f"\n• {message}")
     
     @staticmethod
     def pause(message: str = "按任意鍵繼續..."):
@@ -103,31 +102,30 @@ class BaseUI:
         try:
             input(message)
         except KeyboardInterrupt:
-            print("\n👋 再見！")
+            print("\n▸ 再見！")
             exit(0)
     
     @staticmethod
     def show_loading(message: str = "處理中..."):
-        """顯示加載信息"""
-        print(f"🔄 {message}")
-    
+        """顯示加載信息 - Claude Code 風格"""
+        print(f"⋯ {message}")    
     @staticmethod
     def show_welcome(system_name: str = "MPS 系統"):
-        """顯示歡迎界面"""
+        """顯示歡迎界面 - Claude Code 風格"""
         BaseUI.clear_screen()
-        print("╔═══════════════════════════════════════╗")
-        print(f"║{Formatter.pad_text(f'歡迎使用 {system_name}', 39, 'center')}║")
-        print("║     Member Payment System             ║")
-        print("╚═══════════════════════════════════════╝")
+        print("┌─────────────────────────────────────────┐")
+        print(f"│ {Formatter.pad_text('Welcome to MPS System', 39, 'center')} │")
+        print(f"│ {Formatter.pad_text('Member Payment System', 39, 'center')} │")
+        print("└─────────────────────────────────────────┘")
         print()
     
     @staticmethod
     def show_goodbye():
-        """顯示再見信息"""
-        print("\n╔═══════════════════════════════════════╗")
-        print("║              感謝使用                 ║")
-        print("║         MPS 系統再見！                ║")
-        print("╚═══════════════════════════════════════╝")
+        """顯示再見信息 - Claude Code 風格"""
+        print("\n┌─────────────────────────────────────────┐")
+        print(f"│ {Formatter.pad_text('Thank you for using', 39, 'center')} │")
+        print(f"│ {Formatter.pad_text('MPS System', 39, 'center')} │")
+        print("└─────────────────────────────────────────┘")
 
 class StatusDisplay:
     """狀態顯示組件"""
@@ -137,7 +135,7 @@ class StatusDisplay:
         """顯示交易結果"""
         if success:
             print("┌─────────────────────────────────────┐")
-            print("│              交易成功               │")
+            print("│           Transaction Success       │")
             print("├─────────────────────────────────────┤")
             
             for key, value in tx_info.items():
@@ -148,7 +146,7 @@ class StatusDisplay:
             print("└─────────────────────────────────────┘")
         else:
             print("┌─────────────────────────────────────┐")
-            print("│              交易失敗               │")
+            print("│           Transaction Failed        │")
             print("├─────────────────────────────────────┤")
             
             error_msg = tx_info.get("error", "未知錯誤")
@@ -165,17 +163,17 @@ class StatusDisplay:
     def show_card_info(card_info: Dict[str, Any]):
         """顯示卡片信息"""
         print("┌─────────────────────────────────────┐")
-        print("│              卡片信息               │")
+        print("│             Card Information        │")
         print("├─────────────────────────────────────┤")
         
         # 格式化顯示卡片信息
         fields = [
-            ("卡號", card_info.get("card_no", "")),
-            ("類型", card_info.get("card_type", "")),
-            ("餘額", Formatter.format_currency(card_info.get("balance", 0))),
-            ("積分", Formatter.format_points(card_info.get("points", 0))),
-            ("等級", Formatter.format_level(card_info.get("level", 0))),
-            ("狀態", card_info.get("status", ""))
+            ("Card No", card_info.get("card_no", "")),
+            ("Type", card_info.get("card_type", "")),
+            ("Balance", Formatter.format_currency(card_info.get("balance", 0))),
+            ("Points", Formatter.format_points(card_info.get("points", 0))),
+            ("Level", Formatter.format_level(card_info.get("level", 0))),
+            ("Status", card_info.get("status", ""))
         ]
         
         for label, value in fields:
@@ -189,7 +187,7 @@ class StatusDisplay:
     def show_qr_code(qr_info: Dict[str, Any]):
         """顯示 QR 碼信息"""
         print("┌─────────────────────────────────────┐")
-        print("│            付款 QR 碼               │")
+        print("│            Payment QR Code          │")
         print("├─────────────────────────────────────┤")
         
         qr_plain = qr_info.get("qr_plain", "")
@@ -197,15 +195,15 @@ class StatusDisplay:
         
         # 顯示 QR 碼（截斷顯示）
         qr_display = Formatter.truncate_text(qr_plain, 25)
-        print(f"│ QR 碼: {Formatter.pad_text(qr_display, 25, 'left')} │")
+        print(f"│ Code: {Formatter.pad_text(qr_display, 28, 'left')} │")
         
         # 顯示過期時間
         expires_display = Formatter.format_datetime(expires_at)
-        print(f"│ 過期時間: {Formatter.pad_text(expires_display, 21, 'left')} │")
+        print(f"│ Expires: {Formatter.pad_text(expires_display, 25, 'left')} │")
         
         print("├─────────────────────────────────────┤")
-        print("│ 🔔 請向商戶出示此 QR 碼進行支付     │")
-        print("│ ⏰ QR 碼將在 15 分鐘後自動過期      │")
+        print("│ ▸ Show this QR code to merchant     │")
+        print("│ ▸ Code expires in 15 minutes        │")
         print("└─────────────────────────────────────┘")
 
 class InputHelper:
@@ -226,7 +224,7 @@ class InputHelper:
                 
                 # 檢查必填
                 if required and not value:
-                    print("❌ 此項為必填")
+                    print("✗ 此項為必填")
                     continue
                 
                 # 類型轉換
@@ -239,15 +237,15 @@ class InputHelper:
                 
                 # 驗證
                 if value and validator and not validator(value):
-                    print("❌ 輸入格式不正確")
+                    print("✗ 輸入格式不正確")
                     continue
                 
                 return value
                 
             except ValueError:
-                print(f"❌ 請輸入有效的{input_type}")
+                print(f"✗ 請輸入有效的{input_type}")
             except KeyboardInterrupt:
-                print("\n👋 再見！")
+                print("\n▸ 再見！")
                 exit(0)
     
     @staticmethod
@@ -263,7 +261,7 @@ class InputHelper:
                     break
                 lines.append(line)
             except KeyboardInterrupt:
-                print("\n👋 再見！")
+                print("\n▸ 再見！")
                 exit(0)
         
         return '\n'.join(lines)

@@ -260,7 +260,7 @@ class StatusTable:
             for key, value in data.items():
                 # 根據值類型選擇顯示方式
                 if isinstance(value, bool):
-                    status = "✅" if value else "❌"
+                    status = "✓" if value else "✗"
                     print(f"  {key}: {status}")
                 elif isinstance(value, (int, float)):
                     print(f"  {key}: {value:,}")

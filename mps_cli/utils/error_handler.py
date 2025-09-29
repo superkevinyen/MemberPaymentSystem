@@ -44,38 +44,38 @@ class ErrorHandler:
             card_id = context.get("card_id")
             if card_id:
                 # 這裡可以查詢當前餘額，但為了簡化先返回通用信息
-                return "❌ 餘額不足，請充值後再試"
-            return "❌ 餘額不足，請充值後再試"
+                return "✗ 餘額不足，請充值後再試"
+            return "✗ 餘額不足，請充值後再試"
         
         elif "QR_EXPIRED_OR_INVALID" in error_str:
-            return "❌ QR 碼已過期或無效，請重新生成付款碼"
+            return "✗ QR 碼已過期或無效，請重新生成付款碼"
         
         elif "NOT_MERCHANT_USER" in error_str:
             return "❌ 您沒有此商戶的操作權限，請聯繫管理員"
         
         elif "CARD_NOT_FOUND_OR_INACTIVE" in error_str:
-            return "❌ 卡片不存在或未激活，請檢查卡片狀態"
+            return "✗ 卡片不存在或未激活，請檢查卡片狀態"
         
         elif "EXTERNAL_ID_ALREADY_BOUND" in error_str:
-            return "❌ 外部身份已被其他會員綁定"
+            return "✗ 外部身份已被其他會員綁定"
         
         elif "INVALID_BINDING_PASSWORD" in error_str:
-            return "❌ 綁定密碼錯誤"
+            return "✗ 綁定密碼錯誤"
         
         elif "REFUND_EXCEEDS_REMAINING" in error_str:
-            return "❌ 退款金額超過可退金額"
+            return "✗ 退款金額超過可退金額"
         
         elif "CARD_TYPE_NOT_SHAREABLE" in error_str:
-            return "❌ 此類型卡片不支持共享"
+            return "✗ 此類型卡片不支持共享"
         
         elif "CANNOT_REMOVE_LAST_OWNER" in error_str:
-            return "❌ 不能移除最後一個擁有者"
+            return "✗ 不能移除最後一個擁有者"
         
         elif "UNSUPPORTED_CARD_TYPE_FOR_RECHARGE" in error_str:
-            return "❌ 此卡片類型不支持充值"
+            return "✗ 此卡片類型不支持充值"
         
         elif "ONLY_COMPLETED_PAYMENT_REFUNDABLE" in error_str:
-            return "❌ 只能退款已完成的支付交易"
+            return "✗ 只能退款已完成的支付交易"
         
         # 其他錯誤處理
         return self.handle_rpc_error(error)
@@ -109,15 +109,15 @@ class ErrorHandler:
         
         # 基本錯誤信息
         if error_code and error_code in ERROR_MESSAGES:
-            message = f"❌ {ERROR_MESSAGES[error_code]}"
+            message = f"✗ {ERROR_MESSAGES[error_code]}"
         else:
-            message = f"❌ {error_str}"
+            message = f"✗ {error_str}"
         
         # 添加解決方案建議
         if show_suggestion and error_code:
             suggestion = self.suggest_solution(error_code)
             if suggestion:
-                message += f"\n💡 建議：{suggestion}"
+                message += f"\n  建議：{suggestion}"
         
         return message
 

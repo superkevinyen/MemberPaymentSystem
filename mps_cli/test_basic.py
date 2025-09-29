@@ -20,47 +20,47 @@ def test_imports():
         # 測試配置模組（跳過 supabase_client 以避免 realtime 問題）
         from config.settings import settings
         from config.constants import CARD_TYPES, ERROR_MESSAGES
-        print("✅ 配置模組導入成功")
+        print("▸ 配置模組導入成功")
         
         # 測試工具模組
         from utils.validators import Validator
         from utils.formatters import Formatter
         from utils.error_handler import ErrorHandler
         from utils.logger import setup_logging
-        print("✅ 工具模組導入成功")
+        print("▸ 工具模組導入成功")
         
         # 測試數據模型
         from models.base import BaseModel
         from models.member import Member
         from models.card import Card
         from models.transaction import Transaction
-        print("✅ 數據模型導入成功")
+        print("▸ 數據模型導入成功")
         
         # 測試服務層（跳過需要 supabase 的服務）
         from services.base_service import BaseService
-        print("✅ 服務層基礎導入成功")
+        print("▸ 服務層基礎導入成功")
         
         # 測試 UI 組件
         from ui.components.menu import Menu
         from ui.components.table import Table
         from ui.components.form import Form
         from ui.base_ui import BaseUI
-        print("✅ UI 組件導入成功")
+        print("▸ UI 組件導入成功")
         
         # 測試 UI 界面（跳過需要服務層的界面）
-        print("✅ UI 界面跳過（需要服務層支持）")
+        print("▸ UI 界面跳過（需要服務層支持）")
         
         # 嘗試測試 Supabase 相關導入
         try:
             from config.supabase_client import SupabaseClient
-            print("✅ Supabase 客戶端導入成功")
+            print("▸ Supabase 客戶端導入成功")
         except Exception as e:
-            print(f"⚠️  Supabase 客戶端導入失敗（可能需要安裝依賴）: {e}")
+            print(f"!  Supabase 客戶端導入失敗（可能需要安裝依賴）: {e}")
         
         return True
         
     except Exception as e:
-        print(f"❌ 模組導入失敗: {e}")
+        print(f"✗ 模組導入失敗: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -84,11 +84,11 @@ def test_validators():
         assert Validator.validate_amount(100.50) == True
         assert Validator.validate_amount(-10) == False
         
-        print("✅ 驗證器測試通過")
+        print("▸ 驗證器測試通過")
         return True
         
     except Exception as e:
-        print(f"❌ 驗證器測試失敗: {e}")
+        print(f"✗ 驗證器測試失敗: {e}")
         return False
 
 def test_formatters():
@@ -119,11 +119,11 @@ def test_formatters():
         print(f"文本填充結果: '{padded}', 長度: {len(padded)}")
         assert len(padded) == 10
         
-        print("✅ 格式化器測試通過")
+        print("▸ 格式化器測試通過")
         return True
         
     except Exception as e:
-        print(f"❌ 格式化器測試失敗: {e}")
+        print(f"✗ 格式化器測試失敗: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -162,11 +162,11 @@ def test_models():
         assert card.can_recharge() == False  # 標準卡不能充值
         assert card.is_active() == True
         
-        print("✅ 數據模型測試通過")
+        print("▸ 數據模型測試通過")
         return True
         
     except Exception as e:
-        print(f"❌ 數據模型測試失敗: {e}")
+        print(f"✗ 數據模型測試失敗: {e}")
         return False
 
 def test_ui_components():
@@ -189,11 +189,11 @@ def test_ui_components():
         assert table.headers == headers
         assert len(table.data) == 2
         
-        print("✅ UI 組件測試通過")
+        print("▸ UI 組件測試通過")
         return True
         
     except Exception as e:
-        print(f"❌ UI 組件測試失敗: {e}")
+        print(f"✗ UI 組件測試失敗: {e}")
         return False
 
 def test_configuration():
@@ -212,11 +212,11 @@ def test_configuration():
         assert settings.ui.page_size > 0
         assert settings.ui.qr_ttl_seconds > 0
         
-        print("✅ 配置測試通過")
+        print("▸ 配置測試通過")
         return True
         
     except Exception as e:
-        print(f"❌ 配置測試失敗: {e}")
+        print(f"✗ 配置測試失敗: {e}")
         return False
 
 def main():
@@ -251,7 +251,7 @@ def main():
         print("  3. 運行 python main.py 啟動程序")
         return True
     else:
-        print("❌ 部分測試失敗，請檢查錯誤信息")
+        print("✗ 部分測試失敗，請檢查錯誤信息")
         return False
 
 if __name__ == "__main__":
