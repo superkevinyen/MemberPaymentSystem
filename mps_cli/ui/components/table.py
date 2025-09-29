@@ -67,7 +67,7 @@ class Table:
         # 分頁信息
         if page_size and len(self.data) > page_size:
             total_pages = (len(self.data) + page_size - 1) // page_size
-            print(f"第 {page + 1} 頁，共 {total_pages} 頁 (總計 {len(self.data)} 筆)")
+            print(f"Page {page + 1} of {total_pages} (Total {len(self.data)} records)")
     
     def _show_title(self):
         """顯示標題"""
@@ -114,7 +114,7 @@ class Table:
     def _show_empty_message(self):
         """顯示空數據消息"""
         total_width = sum(self.col_widths) + len(self.headers) * 3 + 1
-        message = "暫無數據"
+        message = "No data available"
         print(f"│{Formatter.pad_text(message, total_width - 2, 'center')}│")
     
     def _show_footer(self):
@@ -171,20 +171,20 @@ class PaginatedTable(Table):
                 current = pagination.get('current_page', self.current_page) + 1
                 total = pagination.get('total_pages', 1)
                 count = pagination.get('total_count', len(data))
-                print(f"第 {current} 頁，共 {total} 頁 (總計 {count} 筆)")
+                print(f"Page {current} of {total} (Total {count} records)")
             
             # 分頁控制
             if not data:
-                print("📝 暫無數據")
-                input("按任意鍵返回...")
+                print("📝 No data available")
+                input("Press any key to return...")
                 break
             
             actions = []
             if pagination.get("has_prev", False) or self.current_page > 0:
-                actions.append("P-上一頁")
+                actions.append("P-Previous")
             if pagination.get("has_next", False):
-                actions.append("N-下一頁")
-            actions.append("Q-退出")
+                actions.append("N-Next")
+            actions.append("Q-Quit")
             
             if len(actions) > 1:
                 action = input(f"{' | '.join(actions)}: ").upper()
@@ -195,7 +195,7 @@ class PaginatedTable(Table):
                 elif action == "Q":
                     break
             else:
-                input("按任意鍵返回...")
+                input("Press any key to return...")
                 break
 
 class SimpleTable:
@@ -206,7 +206,7 @@ class SimpleTable:
                            formatters: Optional[Dict[str, Callable]] = None):
         """顯示鍵值對表格"""
         if not data:
-            print(f"\n{title}: 暫無數據")
+            print(f"\n{title}: No data available")
             return
         
         print(f"\n{title}:")
@@ -234,7 +234,7 @@ class SimpleTable:
     def show_list(title: str, items: List[str], numbered: bool = True):
         """顯示列表"""
         if not items:
-            print(f"\n{title}: 暫無項目")
+            print(f"\n{title}: No items")
             return
         
         print(f"\n{title}:")
@@ -279,9 +279,9 @@ class ComparisonTable:
         """顯示前後對比"""
         print(f"\n{title}")
         print("┌" + "─" * 48 + "┐")
-        print("│" + Formatter.pad_text("項目", 15) + "│" + 
-              Formatter.pad_text("變更前", 15) + "│" + 
-              Formatter.pad_text("變更後", 15) + "│")
+        print("│" + Formatter.pad_text("Item", 15) + "│" +
+              Formatter.pad_text("Before", 15) + "│" +
+              Formatter.pad_text("After", 15) + "│")
         print("├" + "─" * 15 + "┼" + "─" * 15 + "┼" + "─" * 15 + "┤")
         
         all_keys = set(before.keys()) | set(after.keys())

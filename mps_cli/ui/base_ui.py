@@ -43,7 +43,7 @@ class BaseUI:
         BaseUI.show_box(title, content, width)
     
     @staticmethod
-    def show_menu(options: List[str], title: str = "請選擇") -> int:
+    def show_menu(options: List[str], title: str = "Please Select") -> int:
         """顯示菜單並獲取選擇"""
         print(f"\n{title}:")
         for i, option in enumerate(options, 1):
@@ -51,14 +51,14 @@ class BaseUI:
         
         while True:
             try:
-                choice = int(input(f"請選擇 (1-{len(options)}): "))
+                choice = int(input(f"Select (1-{len(options)}): "))
                 if 1 <= choice <= len(options):
                     return choice
-                print(f"✗ 請選擇 1-{len(options)}")
+                print(f"✗ Please select 1-{len(options)}")
             except ValueError:
-                print("✗ 請輸入有效數字")
+                print("✗ Please enter a valid number")
             except KeyboardInterrupt:
-                print("\n▸ 再見！")
+                print("\n▸ Goodbye!")
                 exit(0)
     
     @staticmethod
@@ -70,7 +70,7 @@ class BaseUI:
         if not response:
             return default
         
-        return response in ['y', 'yes', '是', '確認']
+        return response in ['y', 'yes']
     
     @staticmethod
     def show_success(message: str, details: Optional[Dict[str, Any]] = None):
@@ -85,7 +85,7 @@ class BaseUI:
         """顯示錯誤信息 - Claude Code 風格"""
         print(f"\n✗ {message}")
         if suggestion:
-            print(f"  建議：{suggestion}")    
+            print(f"  Suggestion: {suggestion}")
     @staticmethod
     def show_warning(message: str):
         """顯示警告信息 - Claude Code 風格"""
@@ -97,20 +97,20 @@ class BaseUI:
         print(f"\n• {message}")
     
     @staticmethod
-    def pause(message: str = "按任意鍵繼續..."):
+    def pause(message: str = "Press any key to continue..."):
         """暫停等待用戶輸入"""
         try:
             input(message)
         except KeyboardInterrupt:
-            print("\n▸ 再見！")
+            print("\n▸ Goodbye!")
             exit(0)
     
     @staticmethod
-    def show_loading(message: str = "處理中..."):
+    def show_loading(message: str = "Processing..."):
         """顯示加載信息 - Claude Code 風格"""
-        print(f"⋯ {message}")    
+        print(f"⋯ {message}")
     @staticmethod
-    def show_welcome(system_name: str = "MPS 系統"):
+    def show_welcome(system_name: str = "MPS System"):
         """顯示歡迎界面 - Claude Code 風格"""
         BaseUI.clear_screen()
         print("┌─────────────────────────────────────────┐")
@@ -149,7 +149,7 @@ class StatusDisplay:
             print("│           Transaction Failed        │")
             print("├─────────────────────────────────────┤")
             
-            error_msg = tx_info.get("error", "未知錯誤")
+            error_msg = tx_info.get("error", "Unknown Error")
             print(f"│ {Formatter.pad_text(error_msg, 35, 'left')} │")
             
             suggestion = tx_info.get("suggestion")
@@ -224,7 +224,7 @@ class InputHelper:
                 
                 # 檢查必填
                 if required and not value:
-                    print("✗ 此項為必填")
+                    print("✗ This field is required")
                     continue
                 
                 # 類型轉換
@@ -233,25 +233,25 @@ class InputHelper:
                 elif input_type == "float":
                     value = float(value) if value else None
                 elif input_type == "bool":
-                    value = value.lower() in ['y', 'yes', '是', '1', 'true'] if value else False
+                    value = value.lower() in ['y', 'yes', '1', 'true'] if value else False
                 
                 # 驗證
                 if value and validator and not validator(value):
-                    print("✗ 輸入格式不正確")
+                    print("✗ Invalid input format")
                     continue
                 
                 return value
                 
             except ValueError:
-                print(f"✗ 請輸入有效的{input_type}")
+                print(f"✗ Please enter a valid {input_type}")
             except KeyboardInterrupt:
-                print("\n▸ 再見！")
+                print("\n▸ Goodbye!")
                 exit(0)
     
     @staticmethod
     def get_multi_line_input(prompt: str, end_marker: str = "END") -> str:
         """獲取多行輸入"""
-        print(f"{prompt} (輸入 '{end_marker}' 結束):")
+        print(f"{prompt} (Enter '{end_marker}' to finish):")
         lines = []
         
         while True:
@@ -261,7 +261,7 @@ class InputHelper:
                     break
                 lines.append(line)
             except KeyboardInterrupt:
-                print("\n▸ 再見！")
+                print("\n▸ Goodbye!")
                 exit(0)
         
         return '\n'.join(lines)

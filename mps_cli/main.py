@@ -26,16 +26,16 @@ def main():
     try:
         # 設置日誌
         setup_logging()
-        logger.info("MPS CLI 啟動")
+        logger.info("MPS CLI Started")
         
         # 驗證配置
         settings.validate()
-        logger.info("配置驗證通過")
+        logger.info("Configuration validation passed")
         
         # 測試數據庫連接
         from config.supabase_client import supabase_client
         if not supabase_client.test_connection():
-            BaseUI.show_error("無法連接到數據庫，請檢查配置")
+            BaseUI.show_error("Unable to connect to database, please check configuration")
             return
         
         # 顯示歡迎界面
@@ -46,69 +46,69 @@ def main():
         
         # 啟動對應界面
         if role == "member":
-            logger.info("啟動會員界面")
+            logger.info("Starting member interface")
             MemberUI().start()
         elif role == "merchant":
-            logger.info("啟動商戶界面")
+            logger.info("Starting merchant interface")
             MerchantUI().start()
         elif role == "admin":
-            logger.info("啟動管理員界面")
+            logger.info("Starting admin interface")
             AdminUI().start()
         else:
             BaseUI.show_goodbye()
             
     except KeyboardInterrupt:
-        print("\n▸ 再見！")
-        logger.info("用戶中斷程序")
+        print("\n▸ Goodbye!")
+        logger.info("User interrupted program")
     except Exception as e:
-        BaseUI.show_error(f"系統錯誤: {e}")
-        logger.error(f"系統錯誤: {e}", exc_info=True)
+        BaseUI.show_error(f"System error: {e}")
+        logger.error(f"System error: {e}", exc_info=True)
         sys.exit(1)
     finally:
-        logger.info("MPS CLI 結束")
+        logger.info("MPS CLI Ended")
 
 def show_welcome():
     """顯示歡迎界面"""
-    BaseUI.show_welcome("MPS 系統")
+    BaseUI.show_welcome("MPS System")
     
-    print("▸ 系統功能")
-    print("  ├─ MEMBER    會員用戶：查看卡片、生成 QR 碼、充值")
-    print("  ├─ MERCHANT  商戶用戶：掃碼收款、退款處理")
-    print("  └─ ADMIN     管理員：會員管理、卡片管理")
+    print("▸ System Features")
+    print("  ├─ MEMBER    Member User: View cards, generate QR codes, recharge")
+    print("  ├─ MERCHANT  Merchant User: Scan & charge, process refunds")
+    print("  └─ ADMIN     Administrator: Member management, card management")
     print()
 
 def select_role() -> str:
     """選擇用戶角色"""
     roles = {
-        "1": ("member", "會員用戶", "[MEMBER]"),
-        "2": ("merchant", "商戶用戶", "[MERCHANT]"), 
-        "3": ("admin", "管理員", "[ADMIN]"),
-        "4": ("exit", "退出系統", "[EXIT]")
+        "1": ("member", "Member User", "[MEMBER]"),
+        "2": ("merchant", "Merchant User", "[MERCHANT]"),
+        "3": ("admin", "Administrator", "[ADMIN]"),
+        "4": ("exit", "Exit System", "[EXIT]")
     }
     
-    print("▸ 請選擇您的角色")
+    print("▸ Please select your role")
     for key, (role, name, prefix) in roles.items():
         print(f"  {key}. {prefix:<12} {name}")
     
     while True:
         try:
-            choice = input("請選擇 (1-4): ").strip()
+            choice = input("Please select (1-4): ").strip()
             if choice in roles:
                 selected_role, role_name, icon = roles[choice]
                 
                 if selected_role == "exit":
                     return "exit"
                 
-                print(f"\n▸ 您選擇了：{role_name}")
+                print(f"\n▸ You selected: {role_name}")
                 
                 # 確認選擇
-                if BaseUI.confirm_action("確認進入？", True):
-                    logger.info(f"用戶選擇角色: {selected_role}")
+                if BaseUI.confirm_action("Confirm to enter?", True):
+                    logger.info(f"User selected role: {selected_role}")
                     return selected_role
                 else:
                     print()  # 重新選擇
             else:
-                print("✗ 請選擇 1-4")
+                print("✗ Please select 1-4")
         except KeyboardInterrupt:
             return "exit"
 
@@ -120,12 +120,12 @@ def member_main():
         
         from config.supabase_client import supabase_client
         if not supabase_client.test_connection():
-            BaseUI.show_error("無法連接到數據庫")
+            BaseUI.show_error("Unable to connect to database")
             return
         
         MemberUI().start()
     except Exception as e:
-        BaseUI.show_error(f"會員系統錯誤: {e}")
+        BaseUI.show_error(f"Member system error: {e}")
 
 def merchant_main():
     """商戶用戶入口"""
@@ -135,12 +135,12 @@ def merchant_main():
         
         from config.supabase_client import supabase_client
         if not supabase_client.test_connection():
-            BaseUI.show_error("無法連接到數據庫")
+            BaseUI.show_error("Unable to connect to database")
             return
         
         MerchantUI().start()
     except Exception as e:
-        BaseUI.show_error(f"商戶系統錯誤: {e}")
+        BaseUI.show_error(f"Merchant system error: {e}")
 
 def admin_main():
     """管理員入口"""
@@ -150,12 +150,12 @@ def admin_main():
         
         from config.supabase_client import supabase_client
         if not supabase_client.test_connection():
-            BaseUI.show_error("無法連接到數據庫")
+            BaseUI.show_error("Unable to connect to database")
             return
         
         AdminUI().start()
     except Exception as e:
-        BaseUI.show_error(f"管理系統錯誤: {e}")
+        BaseUI.show_error(f"Admin system error: {e}")
 
 def test_connection():
     """測試數據庫連接"""
@@ -165,53 +165,53 @@ def test_connection():
         
         from config.supabase_client import supabase_client
         
-        print("正在測試數據庫連接...")
+        print("Testing database connection...")
         
         if supabase_client.test_connection():
-            print("▸ 數據庫連接成功")
+            print("▸ Database connection successful")
             
             # 顯示基本統計
             try:
                 result = supabase_client.rpc("test_connection", {})
                 if result and result.get('stats'):
                     stats = result['stats']
-                    print(f"▸ 系統概況:")
-                    print(f"  會員數量: {stats.get('members', 0)}")
-                    print(f"  卡片數量: {stats.get('cards', 0)}")
-                    print(f"  商戶數量: {stats.get('merchants', 0)}")
-                    print(f"  測試時間: {result.get('timestamp', 'N/A')}")
+                    print(f"▸ System Overview:")
+                    print(f"  Members: {stats.get('members', 0)}")
+                    print(f"  Cards: {stats.get('cards', 0)}")
+                    print(f"  Merchants: {stats.get('merchants', 0)}")
+                    print(f"  Test Time: {result.get('timestamp', 'N/A')}")
                 else:
-                    print("! 無法獲取統計信息")
+                    print("! Unable to get statistics")
                 
             except Exception as e:
-                print(f"! 無法獲取統計信息: {e}")
+                print(f"! Unable to get statistics: {e}")
         else:
-            print("✗ 數據庫連接失敗")
+            print("✗ Database connection failed")
             
     except Exception as e:
-        print(f"✗ 連接測試失敗: {e}")
+        print(f"✗ Connection test failed: {e}")
 
 def show_help():
     """顯示幫助信息"""
-    print("MPS CLI - Member Payment System 命令行界面")
+    print("MPS CLI - Member Payment System Command Line Interface")
     print()
-    print("使用方法:")
-    print("  python main.py              # 啟動主程序")
-    print("  python main.py member       # 直接啟動會員界面")
-    print("  python main.py merchant     # 直接啟動商戶界面")
-    print("  python main.py admin        # 直接啟動管理員界面")
-    print("  python main.py test         # 測試數據庫連接")
-    print("  python main.py help         # 顯示此幫助信息")
+    print("Usage:")
+    print("  python main.py              # Start main program")
+    print("  python main.py member       # Start member interface directly")
+    print("  python main.py merchant     # Start merchant interface directly")
+    print("  python main.py admin        # Start admin interface directly")
+    print("  python main.py test         # Test database connection")
+    print("  python main.py help         # Show this help information")
     print()
-    print("環境配置:")
-    print("  請確保 .env 文件已正確配置 Supabase 連接信息")
-    print("  參考 .env.example 文件進行配置")
+    print("Environment Configuration:")
+    print("  Please ensure .env file is properly configured with Supabase connection info")
+    print("  Refer to .env.example file for configuration")
     print()
-    print("功能特色:")
-    print("  • 支持中文字符寬度對齊")
-    print("  • 完善的錯誤處理和用戶提示")
-    print("  • 基於 Supabase RPC 的後端交互")
-    print("  • 模組化的架構設計")
+    print("Features:")
+    print("  • Support for Chinese character width alignment")
+    print("  • Comprehensive error handling and user prompts")
+    print("  • Backend interaction based on Supabase RPC")
+    print("  • Modular architecture design")
 
 if __name__ == "__main__":
     # 處理命令行參數
@@ -229,7 +229,7 @@ if __name__ == "__main__":
         elif command in ["help", "-h", "--help"]:
             show_help()
         else:
-            print(f"✗ 未知命令: {command}")
-            print("使用 'python main.py help' 查看幫助信息")
+            print(f"✗ Unknown command: {command}")
+            print("Use 'python main.py help' to view help information")
     else:
         main()

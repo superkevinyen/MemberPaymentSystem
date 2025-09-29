@@ -35,9 +35,9 @@ class MemberUI:
             self._show_main_menu()
             
         except KeyboardInterrupt:
-            print("\n▸ 再見！")
+            print("\n▸ Goodbye!")
         except Exception as e:
-            BaseUI.show_error(f"系統錯誤: {e}")
+            BaseUI.show_error(f"System error: {e}")
         finally:
             if self.current_member_id:
                 ui_logger.log_logout("member")
@@ -45,13 +45,13 @@ class MemberUI:
     def _member_login(self) -> bool:
         """會員登入流程"""
         BaseUI.clear_screen()
-        BaseUI.show_header("會員系統登入")
+        BaseUI.show_header("Member System Login")
         
-        print("請輸入會員 ID 或手機號進行登入")
-        identifier = input("會員 ID/手機號: ").strip()
+        print("Please enter Member ID or phone number to login")
+        identifier = input("Member ID/Phone: ").strip()
         
         if not identifier:
-            BaseUI.show_error("請輸入會員 ID 或手機號")
+            BaseUI.show_error("Please enter Member ID or phone number")
             BaseUI.pause()
             return False
         
@@ -59,7 +59,7 @@ class MemberUI:
             member = self.member_service.validate_member_login(identifier)
             
             if not member:
-                BaseUI.show_error("會員不存在或狀態異常")
+                BaseUI.show_error("Member does not exist or status abnormal")
                 BaseUI.pause()
                 return False
             
@@ -69,25 +69,25 @@ class MemberUI:
             
             ui_logger.log_login("member", identifier)
             
-            BaseUI.show_success(f"登入成功！歡迎 {member.name}")
+            BaseUI.show_success(f"Login successful! Welcome {member.name}")
             BaseUI.pause()
             return True
             
         except Exception as e:
-            BaseUI.show_error(f"登入失敗: {e}")
+            BaseUI.show_error(f"Login failed: {e}")
             BaseUI.pause()
             return False
     
     def _show_main_menu(self):
         """顯示主菜單"""
         options = [
-            "查看我的卡片",
-            "生成付款 QR 碼", 
-            "充值卡片",
-            "查看交易記錄",
-            "綁定新卡片",
-            "查看積分等級",
-            "退出系統"
+            "View My Cards",
+            "Generate Payment QR Code",
+            "Recharge Card",
+            "View Transaction History",
+            "Bind New Card",
+            "View Points & Level",
+            "Exit System"
         ]
         
         handlers = [
@@ -100,36 +100,36 @@ class MemberUI:
             lambda: False  # 退出
         ]
         
-        menu = Menu(f"MPS 會員系統 - {self.current_member_name}", options, handlers)
+        menu = Menu(f"MPS Member System - {self.current_member_name}", options, handlers)
         menu.run()
     
     def _show_my_cards(self):
         """顯示我的卡片"""
         try:
-            BaseUI.show_loading("正在獲取卡片信息...")
+            BaseUI.show_loading("Getting card information...")
             cards = self.member_service.get_member_cards(self.current_member_id)
             
             if not cards:
-                BaseUI.show_info("您還沒有任何卡片")
+                BaseUI.show_info("You don't have any cards yet")
                 BaseUI.pause()
                 return
             
             # 準備表格數據
-            headers = ["卡號", "類型", "餘額", "積分", "等級", "狀態"]
+            headers = ["Card No", "Type", "Balance", "Points", "Level", "Status"]
             data = []
             
             for card in cards:
                 data.append({
-                    "卡號": card.card_no or "",
-                    "類型": card.get_card_type_display(),
-                    "餘額": Formatter.format_currency(card.balance),
-                    "積分": Formatter.format_points(card.points or 0),
-                    "等級": card.get_level_display(),
-                    "狀態": card.get_status_display()
+                    "Card No": card.card_no or "",
+                    "Type": card.get_card_type_display(),
+                    "Balance": Formatter.format_currency(card.balance),
+                    "Points": Formatter.format_points(card.points or 0),
+                    "Level": card.get_level_display(),
+                    "Status": card.get_status_display()
                 })
             
             BaseUI.clear_screen()
-            table = Table(headers, data, "我的卡片")
+            table = Table(headers, data, "My Cards")
             table.display()
             
             # 顯示統計信息
@@ -137,16 +137,16 @@ class MemberUI:
             total_points = sum(card.points or 0 for card in cards)
             active_count = len([card for card in cards if card.is_active()])
             
-            print(f"\n📊 統計信息:")
-            print(f"   總卡片數: {len(cards)} 張")
-            print(f"   激活卡片: {active_count} 張")
-            print(f"   總餘額: {Formatter.format_currency(total_balance)}")
-            print(f"   總積分: {Formatter.format_points(total_points)}")
+            print(f"\n📊 Statistics:")
+            print(f"   Total Cards: {len(cards)} cards")
+            print(f"   Active Cards: {active_count} cards")
+            print(f"   Total Balance: {Formatter.format_currency(total_balance)}")
+            print(f"   Total Points: {Formatter.format_points(total_points)}")
             
             BaseUI.pause()
             
         except Exception as e:
-            BaseUI.show_error(f"查詢失敗: {e}")
+            BaseUI.show_error(f"Query failed: {e}")
             BaseUI.pause()
     
     def _generate_qr(self):
@@ -156,22 +156,22 @@ class MemberUI:
             cards = self.member_service.get_active_cards(self.current_member_id)
             
             if not cards:
-                BaseUI.show_error("沒有可用的激活卡片")
+                BaseUI.show_error("No active cards available")
                 BaseUI.pause()
                 return
             
             BaseUI.clear_screen()
-            BaseUI.show_header("生成付款 QR 碼")
+            BaseUI.show_header("Generate Payment QR Code")
             
             # 選擇卡片
-            print("請選擇要生成 QR 碼的卡片:")
+            print("Please select card to generate QR code:")
             card_options = [card.display_info() for card in cards]
-            choice = SimpleMenu.show_options("可用卡片", card_options)
+            choice = SimpleMenu.show_options("Available Cards", card_options)
             
             selected_card = cards[choice - 1]
             
             # 生成 QR 碼
-            BaseUI.show_loading("正在生成 QR 碼...")
+            BaseUI.show_loading("Generating QR code...")
             qr_result = self.qr_service.rotate_qr(selected_card.id)
             
             BaseUI.clear_screen()
@@ -191,7 +191,7 @@ class MemberUI:
             # 顯示 QR 碼信息
             StatusDisplay.show_qr_code(qr_result)
             
-            ui_logger.log_user_action("生成 QR 碼", {
+            ui_logger.log_user_action("Generate QR Code", {
                 "card_id": selected_card.id,
                 "card_no": selected_card.card_no
             })
@@ -199,7 +199,7 @@ class MemberUI:
             BaseUI.pause()
             
         except Exception as e:
-            BaseUI.show_error(f"QR 碼生成失敗: {e}")
+            BaseUI.show_error(f"QR code generation failed: {e}")
             BaseUI.pause()
     
     def _recharge_card(self):
@@ -209,45 +209,45 @@ class MemberUI:
             cards = self.member_service.get_rechargeable_cards(self.current_member_id)
             
             if not cards:
-                BaseUI.show_error("沒有可充值的卡片", "只有預付卡和企業卡支持充值")
+                BaseUI.show_error("No rechargeable cards available", "Only prepaid and corporate cards support recharge")
                 BaseUI.pause()
                 return
             
             BaseUI.clear_screen()
-            BaseUI.show_header("卡片充值")
+            BaseUI.show_header("Card Recharge")
             
             # 選擇卡片
-            print("請選擇要充值的卡片:")
+            print("Please select card to recharge:")
             card_options = [card.display_info() for card in cards]
-            choice = SimpleMenu.show_options("可充值卡片", card_options)
+            choice = SimpleMenu.show_options("Rechargeable Cards", card_options)
             
             selected_card = cards[choice - 1]
             
             # 充值表單
-            print(f"\n選中卡片: {selected_card.display_info()}")
+            print(f"\nSelected Card: {selected_card.display_info()}")
             
             # 獲取充值金額
-            amount = QuickForm.get_amount("請輸入充值金額", 0.01, 50000)
+            amount = QuickForm.get_amount("Please enter recharge amount", 0.01, 50000)
             
             # 選擇支付方式
             payment_methods = self.payment_service.get_payment_methods()
             method_options = [method["name"] for method in payment_methods]
-            method_choice = SimpleMenu.show_options("支付方式", method_options)
+            method_choice = SimpleMenu.show_options("Payment Method", method_options)
             selected_method = payment_methods[method_choice - 1]["code"]
             
             # 確認充值
-            print(f"\n充值信息確認:")
-            print(f"卡片: {selected_card.card_no}")
-            print(f"金額: {Formatter.format_currency(amount)}")
-            print(f"支付方式: {payment_methods[method_choice - 1]['name']}")
+            print(f"\nRecharge Information Confirmation:")
+            print(f"Card: {selected_card.card_no}")
+            print(f"Amount: {Formatter.format_currency(amount)}")
+            print(f"Payment Method: {payment_methods[method_choice - 1]['name']}")
             
-            if not QuickForm.get_confirmation("確認充值？"):
-                BaseUI.show_info("充值已取消")
+            if not QuickForm.get_confirmation("Confirm recharge?"):
+                BaseUI.show_info("Recharge cancelled")
                 BaseUI.pause()
                 return
             
             # 執行充值
-            BaseUI.show_loading("正在處理充值...")
+            BaseUI.show_loading("Processing recharge...")
             result = self.payment_service.recharge_card(
                 selected_card.id,
                 Decimal(str(amount)),
@@ -258,28 +258,28 @@ class MemberUI:
             
             # 顯示充值結果
             StatusDisplay.show_transaction_result(True, {
-                "交易號": result["tx_no"],
-                "充值金額": Formatter.format_currency(result["amount"]),
-                "支付方式": payment_methods[method_choice - 1]["name"],
-                "處理時間": Formatter.format_datetime(result.get("created_at"))
+                "Transaction No": result["tx_no"],
+                "Recharge Amount": Formatter.format_currency(result["amount"]),
+                "Payment Method": payment_methods[method_choice - 1]["name"],
+                "Processing Time": Formatter.format_datetime(result.get("created_at"))
             })
             
-            ui_logger.log_transaction("充值", amount, result["tx_no"])
+            ui_logger.log_transaction("Recharge", amount, result["tx_no"])
             
             BaseUI.pause()
             
         except Exception as e:
-            BaseUI.show_error(f"充值失敗: {e}")
+            BaseUI.show_error(f"Recharge failed: {e}")
             BaseUI.pause()
     
     def _view_transactions(self):
         """查看交易記錄"""
         try:
             BaseUI.clear_screen()
-            BaseUI.show_header("交易記錄查詢")
+            BaseUI.show_header("Transaction History Query")
             
             # 創建分頁表格
-            headers = ["交易號", "類型", "金額", "狀態", "時間"]
+            headers = ["Transaction No", "Type", "Amount", "Status", "Time"]
             
             def fetch_transactions(page: int, page_size: int):
                 return self.member_service.get_member_transactions(
@@ -288,7 +288,7 @@ class MemberUI:
                     page * page_size
                 )
             
-            paginated_table = PaginatedTable(headers, fetch_transactions, "我的交易記錄")
+            paginated_table = PaginatedTable(headers, fetch_transactions, "My Transaction History")
             
             # 轉換數據格式
             def format_transaction_data(tx_data):
@@ -297,11 +297,11 @@ class MemberUI:
                 
                 for tx in transactions:
                     formatted_data.append({
-                        "交易號": tx.tx_no or "",
-                        "類型": tx.get_tx_type_display(),
-                        "金額": Formatter.format_currency(tx.final_amount),
-                        "狀態": tx.get_status_display(),
-                        "時間": tx.format_datetime("created_at")
+                        "Transaction No": tx.tx_no or "",
+                        "Type": tx.get_tx_type_display(),
+                        "Amount": Formatter.format_currency(tx.final_amount),
+                        "Status": tx.get_status_display(),
+                        "Time": tx.format_datetime("created_at")
                     })
                 
                 return {
@@ -318,43 +318,43 @@ class MemberUI:
             paginated_table.display_interactive()
             
         except Exception as e:
-            BaseUI.show_error(f"查詢失敗: {e}")
+            BaseUI.show_error(f"Query failed: {e}")
             BaseUI.pause()
     
     def _bind_new_card(self):
         """綁定新卡片"""
         try:
             BaseUI.clear_screen()
-            BaseUI.show_header("綁定新卡片")
+            BaseUI.show_header("Bind New Card")
             
             # 輸入卡片 ID
-            card_id = QuickForm.get_text("請輸入卡片 ID", True, Validator.validate_card_id,
-                                       "請輸入有效的 UUID 格式卡片 ID")
+            card_id = QuickForm.get_text("Please enter Card ID", True, Validator.validate_card_id,
+                                       "Please enter valid UUID format Card ID")
             
             # 選擇綁定角色
             roles = ["member", "viewer"]
-            role_names = ["成員 (可使用卡片)", "查看者 (僅查看信息)"]
-            role_choice = SimpleMenu.show_options("綁定角色", role_names)
+            role_names = ["Member (Can use card)", "Viewer (View info only)"]
+            role_choice = SimpleMenu.show_options("Binding Role", role_names)
             selected_role = roles[role_choice - 1]
             
             # 輸入綁定密碼（如果需要）
-            binding_password = input("請輸入綁定密碼 (如果卡片設置了密碼，可選): ").strip()
+            binding_password = input("Enter binding password (optional, if card has password): ").strip()
             if not binding_password:
                 binding_password = None
             
             # 確認綁定
-            print(f"\n綁定信息確認:")
-            print(f"卡片 ID: {card_id}")
-            print(f"綁定角色: {role_names[role_choice - 1]}")
-            print(f"綁定密碼: {'已設置' if binding_password else '未設置'}")
+            print(f"\nBinding Information Confirmation:")
+            print(f"Card ID: {card_id}")
+            print(f"Binding Role: {role_names[role_choice - 1]}")
+            print(f"Binding Password: {'Set' if binding_password else 'Not Set'}")
             
-            if not QuickForm.get_confirmation("確認綁定？"):
-                BaseUI.show_info("綁定已取消")
+            if not QuickForm.get_confirmation("Confirm binding?"):
+                BaseUI.show_info("Binding cancelled")
                 BaseUI.pause()
                 return
             
             # 執行綁定
-            BaseUI.show_loading("正在綁定卡片...")
+            BaseUI.show_loading("Binding card...")
             result = self.member_service.bind_card(
                 card_id,
                 self.current_member_id,
@@ -363,44 +363,44 @@ class MemberUI:
             )
             
             if result:
-                BaseUI.show_success("卡片綁定成功！")
-                ui_logger.log_user_action("綁定卡片", {
+                BaseUI.show_success("Card bound successfully!")
+                ui_logger.log_user_action("Bind Card", {
                     "card_id": card_id,
                     "role": selected_role
                 })
             else:
-                BaseUI.show_error("卡片綁定失敗")
+                BaseUI.show_error("Card binding failed")
             
             BaseUI.pause()
             
         except Exception as e:
-            BaseUI.show_error(f"綁定失敗: {e}")
+            BaseUI.show_error(f"Binding failed: {e}")
             BaseUI.pause()
     
     def _view_points_level(self):
         """查看積分等級"""
         try:
             BaseUI.clear_screen()
-            BaseUI.show_header("積分等級信息")
+            BaseUI.show_header("Points & Level Information")
             
             cards = self.member_service.get_member_cards(self.current_member_id)
             
             if not cards:
-                BaseUI.show_info("您還沒有任何卡片")
+                BaseUI.show_info("You don't have any cards yet")
                 BaseUI.pause()
                 return
             
             # 顯示每張卡片的積分等級信息
             for i, card in enumerate(cards, 1):
-                print(f"\n📱 卡片 {i}: {card.card_no}")
+                print(f"\n📱 Card {i}: {card.card_no}")
                 print("─" * 40)
                 
                 level_info = {
-                    "卡片類型": card.get_card_type_display(),
-                    "當前積分": Formatter.format_points(card.points or 0),
-                    "當前等級": card.get_level_display(),
-                    "當前折扣": card.get_discount_display(),
-                    "卡片狀態": card.get_status_display()
+                    "Card Type": card.get_card_type_display(),
+                    "Current Points": Formatter.format_points(card.points or 0),
+                    "Current Level": card.get_level_display(),
+                    "Current Discount": card.get_discount_display(),
+                    "Card Status": card.get_status_display()
                 }
                 
                 for key, value in level_info.items():
@@ -413,7 +413,7 @@ class MemberUI:
             BaseUI.pause()
             
         except Exception as e:
-            BaseUI.show_error(f"查詢失敗: {e}")
+            BaseUI.show_error(f"Query failed: {e}")
             BaseUI.pause()
     
     def _show_upgrade_info(self, current_points: int):
@@ -440,14 +440,14 @@ class MemberUI:
             next_info = MEMBERSHIP_LEVELS[next_level]
             points_needed = next_info["min_points"] - current_points
             
-            print(f"  升級信息:")
-            print(f"    下一等級: {next_info['name']}")
-            print(f"    所需積分: {points_needed:,} 分")
-            print(f"    升級後折扣: {Formatter.format_discount(next_info['discount'])}")
+            print(f"  Upgrade Information:")
+            print(f"    Next Level: {next_info['name']}")
+            print(f"    Points Needed: {points_needed:,} points")
+            print(f"    Discount After Upgrade: {Formatter.format_discount(next_info['discount'])}")
         else:
-            print(f"  🎉 您已達到最高等級！")
+            print(f"  🎉 You have reached the highest level!")
     
-    def _select_card(self, cards: List[Card], title: str = "選擇卡片") -> Optional[Card]:
+    def _select_card(self, cards: List[Card], title: str = "Select Card") -> Optional[Card]:
         """選擇卡片的通用方法"""
         if not cards:
             return None
@@ -458,11 +458,11 @@ class MemberUI:
         
         while True:
             try:
-                choice = int(input(f"請選擇 (1-{len(cards)}): "))
+                choice = int(input(f"Please select (1-{len(cards)}): "))
                 if 1 <= choice <= len(cards):
                     return cards[choice - 1]
-                print(f"✗ 請選擇 1-{len(cards)}")
+                print(f"✗ Please select 1-{len(cards)}")
             except ValueError:
-                print("✗ 請輸入有效數字")
+                print("✗ Please enter a valid number")
             except KeyboardInterrupt:
                 return None

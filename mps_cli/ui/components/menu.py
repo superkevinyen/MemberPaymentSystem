@@ -16,7 +16,7 @@ class Menu:
         self.handlers = handlers
         
         if len(options) != len(handlers):
-            raise ValueError("選項和處理函數數量必須相同")
+            raise ValueError("Options and handlers count must be the same")
     
     def display(self):
         """顯示菜單"""
@@ -56,18 +56,18 @@ class Menu:
         """獲取用戶選擇"""
         while True:
             try:
-                choice = input(f"請選擇 (1-{len(self.options)}): ").strip()
+                choice = input(f"Please select (1-{len(self.options)}): ").strip()
                 if not choice:
                     continue
                     
                 choice_num = int(choice)
                 if 1 <= choice_num <= len(self.options):
                     return choice_num
-                print(f"✗ 請選擇 1-{len(self.options)}")
+                print(f"✗ Please select 1-{len(self.options)}")
             except ValueError:
-                print("✗ 請輸入有效數字")
+                print("✗ Please enter a valid number")
             except KeyboardInterrupt:
-                print("\n▸ 再見！")
+                print("\n▸ Goodbye!")
                 exit(0)
     
     def run(self):
@@ -85,8 +85,8 @@ class Menu:
                     break
                     
             except Exception as e:
-                print(f"✗ 操作失敗: {e}")
-                input("按任意鍵繼續...")
+                print(f"✗ Operation failed: {e}")
+                input("Press any key to continue...")
 
 class SimpleMenu:
     """簡化菜單組件"""
@@ -100,14 +100,14 @@ class SimpleMenu:
         
         while True:
             try:
-                choice = int(input(f"請選擇 (1-{len(options)}): "))
+                choice = int(input(f"Please select (1-{len(options)}): "))
                 if 1 <= choice <= len(options):
                     return choice
-                print(f"✗ 請選擇 1-{len(options)}")
+                print(f"✗ Please select 1-{len(options)}")
             except ValueError:
-                print("✗ 請輸入有效數字")
+                print("✗ Please enter a valid number")
             except KeyboardInterrupt:
-                print("\n▸ 再見！")
+                print("\n▸ Goodbye!")
                 exit(0)
     
     @staticmethod
@@ -119,7 +119,7 @@ class SimpleMenu:
         if not response:
             return default
         
-        return response in ['y', 'yes', '是', '確認']
+        return response in ['y', 'yes']
     
     @staticmethod
     def show_message(title: str, message: str, message_type: str = "info"):
@@ -138,12 +138,12 @@ class SimpleMenu:
             print(f"   {message}")
     
     @staticmethod
-    def pause(message: str = "按任意鍵繼續..."):
+    def pause(message: str = "Press any key to continue..."):
         """暫停等待用戶輸入"""
         try:
             input(message)
         except KeyboardInterrupt:
-            print("\n▸ 再見！")
+            print("\n▸ Goodbye!")
             exit(0)
 
 class ProgressMenu:
@@ -168,7 +168,7 @@ class ProgressMenu:
                 print(f"⏳ {step}")
         
         print("─" * 40)
-        print(f"進度: {self.current_step}/{len(self.steps)}")
+        print(f"Progress: {self.current_step}/{len(self.steps)}")
     
     def next_step(self):
         """下一步"""

@@ -47,13 +47,13 @@ class Form:
                 
                 # 檢查必填項
                 if field.required and not value:
-                    print(f"✗ {field.label} 為必填項")
+                    print(f"✗ {field.label} is required")
                     continue
                 
                 # 如果有值，進行驗證
                 if value and field.validator:
                     if not field.validator(value):
-                        print(f"✗ {field.label} 格式不正確")
+                        print(f"✗ {field.label} format is incorrect")
                         if field.help_text:
                             print(f"▸ {field.help_text}")
                         continue
@@ -68,9 +68,9 @@ class Form:
         # 顯示標籤和幫助信息
         prompt = field.label
         if field.default is not None:
-            prompt += f" (默認: {field.default})"
+            prompt += f" (Default: {field.default})"
         if not field.required:
-            prompt += " (可選)"
+            prompt += " (Optional)"
         prompt += ": "
         
         if field.help_text:
@@ -102,16 +102,16 @@ class Form:
         
         while True:
             try:
-                choice_input = input("請選擇: ").strip()
+                choice_input = input("Please select: ").strip()
                 if not choice_input and field.default is not None:
                     return field.default
                 
                 choice = int(choice_input)
                 if 1 <= choice <= len(field.options):
                     return field.options[choice - 1]
-                print(f"✗ 請選擇 1-{len(field.options)}")
+                print(f"✗ Please select 1-{len(field.options)}")
             except ValueError:
-                print("✗ 請輸入有效數字")
+                print("✗ Please enter a valid number")
     
     def _get_number_value(self, field: FormField) -> Optional[int]:
         """獲取數字值"""
@@ -124,7 +124,7 @@ class Form:
                     continue
                 return int(value)
             except ValueError:
-                print("✗ 請輸入有效的整數")
+                print("✗ Please enter a valid integer")
     
     def _get_decimal_value(self, field: FormField) -> Optional[float]:
         """獲取小數值"""
@@ -137,7 +137,7 @@ class Form:
                     continue
                 return float(value)
             except ValueError:
-                print("✗ 請輸入有效的數字")
+                print("✗ Please enter a valid number")
     
     def _get_boolean_value(self, field: FormField) -> bool:
         """獲取布爾值"""
@@ -146,12 +146,12 @@ class Form:
             if not value and field.default is not None:
                 return field.default
             
-            if value in ['y', 'yes', '是', '1', 'true']:
+            if value in ['y', 'yes', '1', 'true']:
                 return True
-            elif value in ['n', 'no', '否', '0', 'false']:
+            elif value in ['n', 'no', '0', 'false']:
                 return False
             else:
-                print("✗ 請輸入 y/n")
+                print("✗ Please enter y/n")
     
     def _get_date_value(self, field: FormField) -> Optional[str]:
         """獲取日期值"""
@@ -165,13 +165,13 @@ class Form:
             if self.validator.validate_date_string(value):
                 return value
             else:
-                print("✗ 請輸入有效的日期格式 (YYYY-MM-DD)")
+                print("✗ Please enter valid date format (YYYY-MM-DD)")
 
 class QuickForm:
     """快速表單組件"""
     
     @staticmethod
-    def get_amount(prompt: str = "請輸入金額", min_amount: float = 0.01, 
+    def get_amount(prompt: str = "Please enter amount", min_amount: float = 0.01,
                    max_amount: float = 50000) -> float:
         """獲取金額輸入"""
         while True:
@@ -183,31 +183,31 @@ class QuickForm:
                 amount = float(amount_str)
                 
                 if amount < min_amount:
-                    print(f"✗ 金額不能小於 ¥{min_amount:.2f}")
+                    print(f"✗ Amount cannot be less than ¥{min_amount:.2f}")
                     continue
                 if amount > max_amount:
-                    print(f"✗ 金額不能超過 ¥{max_amount:.2f}")
+                    print(f"✗ Amount cannot exceed ¥{max_amount:.2f}")
                     continue
                 
                 return amount
                 
             except ValueError:
-                print("✗ 請輸入有效的數字")
+                print("✗ Please enter a valid number")
             except KeyboardInterrupt:
                 raise
     
     @staticmethod
-    def get_qr_input(prompt: str = "請輸入 QR 碼") -> str:
+    def get_qr_input(prompt: str = "Please enter QR code") -> str:
         """QR 碼輸入驗證"""
         while True:
             qr_code = input(f"{prompt}: ").strip()
             
             if not qr_code:
-                print("✗ QR 碼不能為空")
+                print("✗ QR code cannot be empty")
                 continue
             
             if len(qr_code) < 16:
-                print("✗ QR 碼格式不正確（長度不足）")
+                print("✗ QR code format incorrect (insufficient length)")
                 continue
             
             return qr_code
@@ -221,7 +221,7 @@ class QuickForm:
         if not response:
             return default
         
-        return response in ['y', 'yes', '是', '確認']
+        return response in ['y', 'yes']
     
     @staticmethod
     def get_choice(prompt: str, choices: List[str], default: Optional[int] = None) -> int:
@@ -232,16 +232,16 @@ class QuickForm:
         
         while True:
             try:
-                choice_input = input("請選擇: ").strip()
+                choice_input = input("Please select: ").strip()
                 if not choice_input and default is not None:
                     return default
                 
                 choice = int(choice_input)
                 if 1 <= choice <= len(choices):
                     return choice
-                print(f"✗ 請選擇 1-{len(choices)}")
+                print(f"✗ Please select 1-{len(choices)}")
             except ValueError:
-                print("✗ 請輸入有效數字")
+                print("✗ Please enter a valid number")
     
     @staticmethod
     def get_text(prompt: str, required: bool = True, 
@@ -255,11 +255,11 @@ class QuickForm:
             value = input(f"{prompt}: ").strip()
             
             if required and not value:
-                print("✗ 此項為必填")
+                print("✗ This field is required")
                 continue
             
             if value and validator and not validator(value):
-                print("✗ 輸入格式不正確")
+                print("✗ Input format is incorrect")
                 if help_text:
                     print(f"▸ {help_text}")
                 continue
@@ -283,7 +283,7 @@ class WizardForm:
         while self.current_step < len(self.steps):
             step = self.steps[self.current_step]
             
-            print(f"\n步驟 {self.current_step + 1}/{len(self.steps)}: {step['title']}")
+            print(f"\nStep {self.current_step + 1}/{len(self.steps)}: {step['title']}")
             print("-" * 30)
             
             if 'description' in step:
@@ -310,9 +310,9 @@ class WizardForm:
             
             # 確認當前步驟
             if self.current_step < len(self.steps) - 1:
-                if not QuickForm.get_confirmation("繼續下一步？", True):
+                if not QuickForm.get_confirmation("Continue to next step?", True):
                     if self.current_step > 0:
-                        if QuickForm.get_confirmation("返回上一步？", False):
+                        if QuickForm.get_confirmation("Go back to previous step?", False):
                             self.current_step -= 1
                             continue
                     else:
@@ -321,14 +321,14 @@ class WizardForm:
             self.current_step += 1
         
         if self.current_step >= len(self.steps):
-            print("\n▸ 嚮導完成！")
+            print("\n▸ Wizard completed!")
             self._show_summary()
         
         return self.data
     
     def _show_summary(self):
         """顯示摘要"""
-        print("\n📋 輸入摘要:")
+        print("\n📋 Input Summary:")
         print("-" * 30)
         for key, value in self.data.items():
             print(f"{key}: {value}")
@@ -341,28 +341,28 @@ class ValidationForm:
     def create_member_form() -> Dict[str, Any]:
         """創建會員表單"""
         fields = [
-            FormField("name", "會員姓名", "text", True, 
-                     Validator.validate_name, help_text="2-50位中文或英文字符"),
-            FormField("phone", "手機號碼", "text", True, 
-                     Validator.validate_phone, help_text="11位中國大陸手機號"),
-            FormField("email", "電子郵件", "text", True, 
-                     Validator.validate_email, help_text="有效的郵箱地址"),
-            FormField("bind_external", "是否綁定外部身份", "boolean", False, default=False),
+            FormField("name", "Member Name", "text", True,
+                     Validator.validate_name, help_text="2-50 Chinese or English characters"),
+            FormField("phone", "Phone Number", "text", True,
+                     Validator.validate_phone, help_text="11-digit China mainland phone number"),
+            FormField("email", "Email", "text", True,
+                     Validator.validate_email, help_text="Valid email address"),
+            FormField("bind_external", "Bind External Identity", "boolean", False, default=False),
         ]
         
-        form = Form("創建新會員", fields)
+        form = Form("Create New Member", fields)
         data = form.display_and_collect()
         
         # 如果選擇綁定外部身份，收集額外信息
         if data.get("bind_external"):
             external_fields = [
-                FormField("provider", "外部平台", "select", True, 
+                FormField("provider", "External Platform", "select", True,
                          options=["wechat", "alipay", "line"]),
-                FormField("external_id", "外部用戶 ID", "text", True, 
-                         Validator.validate_external_id, help_text="3-100位字符")
+                FormField("external_id", "External User ID", "text", True,
+                         Validator.validate_external_id, help_text="3-100 characters")
             ]
             
-            external_form = Form("外部身份綁定", external_fields)
+            external_form = Form("External Identity Binding", external_fields)
             external_data = external_form.display_and_collect()
             data.update(external_data)
         
@@ -372,11 +372,11 @@ class ValidationForm:
     def create_recharge_form() -> Dict[str, Any]:
         """創建充值表單"""
         fields = [
-            FormField("amount", "充值金額", "decimal", True, 
+            FormField("amount", "Recharge Amount", "decimal", True,
                      Validator.validate_amount, help_text="0.01-999999.99"),
-            FormField("payment_method", "支付方式", "select", True,
+            FormField("payment_method", "Payment Method", "select", True,
                      options=["wechat", "alipay", "bank"], default="wechat")
         ]
         
-        form = Form("卡片充值", fields)
+        form = Form("Card Recharge", fields)
         return form.display_and_collect()
