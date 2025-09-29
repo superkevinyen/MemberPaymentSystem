@@ -1,122 +1,389 @@
-# Supabase RPC Functions 規劃
 
-> 註：目前 schema 僅有基礎表結構，RPC 尚未實作。以下為設計藍圖與審查清單。
+# Supabase RPC Documentation (Commercial Edition, Python Examples)
+
+> **Scope**: This guide documents all RPCs shipped in `mps_rpc.sql` for the Member Payment System (MPS).  
+> **Stack**: Supabase (PostgreSQL + RLS), Python client (`supabase-py`).  
+> **Style**: Each RPC lists signature, returns, purpose, side‑effects, permissions, idempotency/concurrency notes, common errors, and **Python examples**.
 
 ---
 
-## 功能分類圖（Mermaid）
+## Getting started (Python)
 
-```mermaid
-flowchart TD
-  A[RPC Functions] --> A1[Admin]
-  A --> A2[Member]
-  A --> A3[Merchant]
-  A --> A4[System]
+```python
+from supabase import create_client, Client
 
-  A1 --> A1a[admin_create_member]
-  A1 --> A1b[admin_update_member]
-  A1 --> A1c[admin_create_card]
-  A1 --> A1d[admin_update_card_status]
-  A1 --> A1e[admin_create_merchant]
-  A1 --> A1f[admin_add_merchant_user]
+# Use a service role key for server-side jobs, or a user JWT for user/merchant actions.
+url = "https://<YOUR-PROJECT-REF>.supabase.co"
+key = "<SUPABASE_ANON_OR_SERVICE_ROLE_KEY>"
+supabase: Client = create_client(url, key)
 
-  A2 --> A2a[user_get_cards]
-  A2 --> A2b[user_rotate_card_qr]
-  A2 --> A2c[user_recharge_card]
-  A2 --> A2d[user_refund_request]
+def rpc(name: str, params: dict):
+    resp = supabase.rpc(name, params).execute()
+    if hasattr(resp, "data"):
+        return resp.data
+    return resp  # supabase-py v2 returns .data; v1 returns response object
+```
 
-  A3 --> A3a[merchant_charge_by_qr]
-  A3 --> A3b[merchant_refund_tx]
-  A3 --> A3c[merchant_get_transactions]
-  A3 --> A3d[merchant_get_settlements]
+**Error handling pattern**
 
-  A4 --> A4a[cron_rotate_qr_codes]
-  A4 --> A4b[cron_settlement_daily]
-  A4 --> A4c[cron_settlement_monthly]
-  A4 --> A4d[cron_expire_cards]
+```python
+try:
+    data = rpc("merchant_charge_by_qr", {
+        "p_merchant_code": "SHOP001",
+        "p_qr_plain": "PLAIN_QR_FROM_SCANNER",
+        "p_raw_amount": 299.00,
+        "p_idempotency_key": "order-123-abc",
+        "p_tag": {"scene": "miniapp"},
+        "p_external_order_id": "WX2025..."
+    })
+except Exception as e:
+    # PostgREST returns database errors as messages; map to UX messages:
+    msg = str(e)
+    if "INSUFFICIENT_BALANCE" in msg:
+        # handle gracefully
+        pass
+    raise
+```
+
+> Tip: Keep **idempotency keys** stable on retries to avoid double charges.
+
+---
+
+## A. Helpers (internal)
+
+> These are internal helpers; you normally **do not call** them from clients.
+
+### `app.card_lock_key(card_id uuid) → bigint`
+- **Purpose**: Map card UUID → advisory lock key for `pg_advisory_xact_lock()`.
+- **Concurrency**: Used inside money-moving RPCs.
+
+### `app.compute_level(points int) → int`
+- **Purpose**: Points → membership level via `membership_levels`.
+
+### `app.compute_discount(points int) → numeric(4,3)`
+- **Purpose**: Points → discount (0..1).
+
+### `app.generate_qr_token_pair() → TABLE(plain text, hash text)`
+- **Purpose**: Generates QR token plain + bcrypt hash (plain is returned only at creation).
+
+---
+
+## B. Members & Bindings
+
+### 1) `app.create_member_profile(name, phone, email, binding_user_org=null, binding_org_id=null, default_card_type='standard') → uuid`
+- **Returns**: `member_id (uuid)`
+- **Purpose**: Create a member + auto‑issue a default card and bind as `owner`.
+- **Side‑effects**: Inserts `member_profiles`, `member_cards`, `card_bindings`, `audit.event_log`.
+- **Permissions**: Platform service/admin recommended. You may expose to self‑signup if needed.
+- **Python**:
+```python
+member_id = rpc("create_member_profile", {
+    "p_name": "王小明",
+    "p_phone": "0988xxxxxx",
+    "p_email": "m@test.com",
+    "p_binding_user_org": "wechat",
+    "p_binding_org_id": "wx_openid_abc",
+    "p_default_card_type": "standard"
+})
+```
+
+### 2) `app.bind_external_identity(member_id, provider, external_id, meta='{}') → boolean`
+- **Purpose**: Link a member to an external identity (wechat/alipay/line…). Upsert semantics.
+- **Side‑effects**: `member_external_identities`, `audit.event_log`.
+- **Uniqueness**: Unique `(provider, external_id)` and `(member_id, provider)`.
+- **Python**:
+```python
+ok = rpc("bind_external_identity", {
+    "p_member_id": member_id,
+    "p_provider": "wechat",
+    "p_external_id": "wx_openid_abc",
+    "p_meta": {"nickname": "小明"}
+})
+```
+
+### 3) `app.bind_member_to_card(card_id, member_id, role='member', binding_password=null) → boolean`
+- **Purpose**: Bind a member to a card (owner/admin/member/viewer). For shared prepaid/corporate cards.
+- **Rules**:
+  - If an owner binding **has a password**, you **must** pass the correct `binding_password`.
+  - If no owner password: claiming `owner` requires `member_id == owner_member_id`.
+- **Side‑effects**: `card_bindings`, `audit.event_log`.
+- **Common errors**: `CARD_NOT_FOUND_OR_INACTIVE`, `INVALID_BINDING_PASSWORD`, `ONLY_OWNER_MEMBER_CAN_CLAIM_OWNER_ROLE`, `CARD_OWNER_NOT_DEFINED`.
+- **Python**:
+```python
+ok = rpc("bind_member_to_card", {
+    "p_card_id": "<card-uuid>",
+    "p_member_id": member_id,
+    "p_role": "member",
+    "p_binding_password": "123456"
+})
+```
+
+### 4) `app.unbind_member_from_card(card_id, member_id) → boolean`
+- **Purpose**: Unbind a member from a card. Protects against removing the **last owner**.
+- **Side‑effects**: `audit.event_log`.
+- **Errors**: `CANNOT_REMOVE_LAST_OWNER`.
+- **Python**:
+```python
+ok = rpc("unbind_member_from_card", {
+    "p_card_id": "<card-uuid>",
+    "p_member_id": member_id
+})
 ```
 
 ---
 
-## 1. Admin Functions
+## C. QR Code
 
-| Function | 功能 | 角色 | 資料表 | 備註 |
-|----------|------|------|--------|------|
-| **admin_create_member** | 建立新會員（含標準卡） | super_admin, admin | member_profiles, member_cards | 建卡時預設 card_type=standard |
-| **admin_update_member** | 更新會員資料 | super_admin, admin | member_profiles | 僅營運可改 |
-| **admin_create_card** | 為會員發行新卡（預充/企業/優惠） | super_admin, admin | member_cards | 支援 owner 指定 |
-| **admin_update_card_status** | 停用/啟用卡片 | super_admin, admin | member_cards | 支援 lost/suspended/closed |
-| **admin_create_merchant** | 建立商戶 | super_admin | merchants | |
-| **admin_add_merchant_user** | 綁定商戶操作員 | super_admin | merchant_users | auth.users → merchant_users |
+### 5) `app.rotate_card_qr(card_id, ttl_seconds=900) → TABLE(qr_plain text, qr_expires_at timestamptz)`
+- **Purpose**: Rotate QR for a card; updates `card_qr_state`, appends `card_qr_history`. Returns **plain** once.
+- **Side‑effects**: `card_qr_state`, `card_qr_history`, `audit.event_log`.
+- **Python**:
+```python
+qr = rpc("rotate_card_qr", {"p_card_id": "<card-uuid>", "p_ttl_seconds": 300})
+# qr = [{"qr_plain":"...", "qr_expires_at":"..."}]
+```
 
----
+### 6) `app.validate_qr_plain(qr_plain) → uuid(card_id)`
+- **Purpose**: Verify a plain token against **unexpired** QR state (bcrypt). Returns `card_id` or raises.
+- **Errors**: `INVALID_QR`, `QR_EXPIRED_OR_INVALID`.
+- **Python**:
+```python
+card_id = rpc("validate_qr_plain", {"p_qr_plain": "PLAIN_QR_FROM_SCANNER"})
+```
 
-## 2. Member Functions
+### 7) `app.revoke_card_qr(card_id) → boolean`
+- **Purpose**: Immediately expire the current QR for a card.
+- **Python**:
+```python
+ok = rpc("revoke_card_qr", {"p_card_id": "<card-uuid>"})
+```
 
-| Function | 功能 | 角色 | 資料表 | 備註 |
-|----------|------|------|--------|------|
-| **user_get_cards** | 查詢本人卡片 | member | member_cards | 遵守 RLS |
-| **user_rotate_card_qr** | 產生卡片支付 QR Code | member | member_cards, card_qr_history | standard: 即時；prepaid/corporate: 允許覆寫 |
-| **user_recharge_card** | 為卡片充值 | member | transactions, member_cards | idempotency_key + advisory lock |
-| **user_refund_request** | 申請退款 | member | transactions | 產生待審核請求（由 merchant/admin 執行） |
-
----
-
-## 3. Merchant Functions
-
-| Function | 功能 | 角色 | 資料表 | 備註 |
-|----------|------|------|--------|------|
-| **merchant_charge_by_qr** | 掃描卡片收款 | merchant | transactions, member_cards | 僅對綁定商戶可見 |
-| **merchant_refund_tx** | 執行退款 | merchant | transactions | original_tx_id 關聯 |
-| **merchant_get_transactions** | 查詢商戶交易紀錄 | merchant | transactions | 支援時間/狀態篩選 |
-| **merchant_get_settlements** | 查詢商戶結算 | merchant | settlements | 支援 Realtime/T+1/Monthly |
-
----
-
-## 4. System Functions
-
-| Function | 功能 | 說明 | 頻率 |
-|----------|------|------|------|
-| **cron_rotate_qr_codes** | 自動更新預充/企業卡 QR Code | 防止重用 | 每 5 分鐘 |
-| **cron_settlement_daily** | 每日結算（T+1 模式） | 匯總交易 → settlements | 每日 |
-| **cron_settlement_monthly** | 每月結算（月結模式） | 匯總交易 → settlements | 每月 |
-| **cron_expire_cards** | 定期過期檢查 | 將過期卡設置 expired | 每日 |
-
----
-
-## 核心交易時序（Mermaid）
-> 供 RPC 設計參考：商戶收款
-
-```mermaid
-sequenceDiagram
-  participant Merchant
-  participant API as RPC API
-  participant DB as Database
-
-  Merchant->>API: merchant_charge_by_qr(qr, raw_amount, idempotency_key)
-  API->>DB: 解析/驗證 QR（卡狀態、餘額、折扣）
-  API->>DB: pg_advisory_xact_lock(card_id)
-  API->>DB: 檢查 idempotency_registry
-  API->>DB: INSERT transactions (processing)
-  API->>DB: UPDATE member_cards.balance / points / level
-  DB->>API: ok
-  API->>DB: UPDATE transactions → completed
-  API-->>Merchant: 返回 tx_no, final_amount, discount
+### 8) `app.cron_rotate_qr_tokens(ttl_seconds=300) → int`
+- **Purpose**: Batch rotate QR for `prepaid/corporate` cards (server cron job).
+- **Returns**: Number of cards affected.
+- **Python**:
+```python
+affected = rpc("cron_rotate_qr_tokens", {"p_ttl_seconds": 300})
 ```
 
 ---
 
-## MVP vs 擴充
+## D. Payments / Refunds / Recharge
 
-- **MVP 必備**
-  - `admin_create_member`
-  - `user_get_cards`
-  - `user_rotate_card_qr`
-  - `merchant_charge_by_qr`
-  - `merchant_refund_tx`
+### 9) `app.merchant_charge_by_qr(merchant_code, qr_plain, raw_amount, idempotency_key=null, tag='{}', external_order_id=null)`  
+**→ TABLE(tx_id uuid, tx_no text, card_id uuid, final_amount numeric, discount numeric)**
 
-- **擴充功能**
-  - `admin_create_merchant`
-  - `user_recharge_card`
-  - `cron_settlement_daily`
-  - `cron_expire_cards`
+- **Purpose**: Merchant scans QR to charge.
+- **Flow**:
+  1. Verify merchant exists & caller is in `merchant_users`.
+  2. `validate_qr_plain` → `card_id`.
+  3. `pg_advisory_xact_lock(card_id)` for concurrency.
+  4. Discount rules:  
+     - `standard` → `compute_discount(points)`  
+     - `prepaid` → prefer `fixed_discount` else `compute_discount(points)`  
+     - `corporate` → `coalesce(fixed_discount, 1.000)`  
+     - `voucher` → not supported (throws)  
+  5. Idempotency via `idempotency_registry` (+ optional `merchant_order_registry`).
+  6. Deduct balance; add points for `standard/prepaid`.
+  7. Mark transaction as `completed`; write `audit`.
+- **Errors**: `MERCHANT_NOT_FOUND_OR_INACTIVE`, `NOT_MERCHANT_USER`, `INVALID_QR`, `CARD_NOT_ACTIVE`, `CARD_EXPIRED`, `INSUFFICIENT_BALANCE`, `UNSUPPORTED_CARD_TYPE_FOR_PAYMENT`.
+- **Python**:
+```python
+charge = rpc("merchant_charge_by_qr", {
+    "p_merchant_code": "SHOP001",
+    "p_qr_plain": "PLAIN_QR_FROM_SCANNER",
+    "p_raw_amount": 299.00,
+    "p_idempotency_key": "order-123-abc",
+    "p_tag": {"scene":"miniapp","campaign":"october"},
+    "p_external_order_id": "WX2025..."
+})
+# -> [{"tx_id":"...", "tx_no":"...", "card_id":"...", "final_amount": 284.05, "discount": 0.95}]
+```
+
+### 10) `app.merchant_refund_tx(merchant_code, original_tx_no, refund_amount, tag='{}')`  
+**→ TABLE(refund_tx_id uuid, refund_tx_no text, refunded_amount numeric)**
+
+- **Purpose**: Refund a completed payment (supports partial/multiple refunds).
+- **Flow**: Lock same card; compute remaining refundable; create refund tx; add balance back.
+- **Errors**: `ORIGINAL_TX_NOT_FOUND`, `ONLY_COMPLETED_PAYMENT_REFUNDABLE`, `REFUND_EXCEEDS_REMAINING`, `NOT_MERCHANT_USER`.
+- **Python**:
+```python
+refund = rpc("merchant_refund_tx", {
+    "p_merchant_code": "SHOP001",
+    "p_original_tx_no": "PAY0000000123",
+    "p_refund_amount": 50.00,
+    "p_tag": {"reason":"user_request"}
+})
+```
+
+### 11) `app.user_recharge_card(card_id, amount, payment_method='wechat', tag='{}', idempotency_key=null, external_order_id=null)`  
+**→ TABLE(tx_id uuid, tx_no text, card_id uuid, amount numeric)**
+
+- **Purpose**: Recharge a card (user/self or 3rd‑party payment callback).
+- **Errors**: `INVALID_RECHARGE_AMOUNT`, `CARD_NOT_FOUND_OR_INACTIVE`.
+- **Python**:
+```python
+recharge = rpc("user_recharge_card", {
+    "p_card_id": "<card-uuid>",
+    "p_amount": 100.0,
+    "p_payment_method": "wechat",
+    "p_tag": {"channel":"miniapp"},
+    "p_idempotency_key": "topup-abc-001",
+    "p_external_order_id": "WXTOPUP2025..."
+})
+```
+
+---
+
+## E. Points & Levels / 積分等級
+
+### 12) `app.update_points_and_level(card_id, delta_points, reason='manual_adjust') → boolean`
+- **Purpose**: Manually adjust points and sync level/discount (`standard/prepaid`).
+- **Side‑effects**: Writes `point_ledger`, `audit.event_log`.
+- **Python**:
+```python
+ok = rpc("update_points_and_level", {
+    "p_card_id": "<card-uuid>",
+    "p_delta_points": 100,
+    "p_reason": "promotion_fix"
+})
+```
+
+---
+
+## F. Settlements & Reports
+
+### 13) `app.generate_settlement(merchant_id, mode, period_start, period_end) → uuid`
+- **Purpose**: Summarize net amount (payments − refunds) & count for a period; create a settlement row.
+- **Permissions**: Caller must be in merchant's `merchant_users`.
+- **Python**:
+```python
+sid = rpc("generate_settlement", {
+    "p_merchant_id": "<merchant-uuid>",
+    "p_mode": "t_plus_1",  # or "realtime", "monthly"
+    "p_period_start": "2025-09-01T00:00:00Z",
+    "p_period_end": "2025-10-01T00:00:00Z"
+})
+```
+
+### 14) `app.list_settlements(merchant_id, limit=50, offset=0)`  
+**→ TABLE(id, period_start, period_end, total_amount, total_tx_count, status, created_at)**
+```python
+rows = rpc("list_settlements", {"p_merchant_id":"<merchant-uuid>", "p_limit":50, "p_offset":0})
+```
+
+### 15) `app.get_member_transactions(member_id, limit=50, offset=0, start_date=null, end_date=null)`  
+**→ TABLE(id, tx_no, tx_type, card_id, merchant_id, final_amount, status, created_at, total_count)**
+```python
+rows = rpc("get_member_transactions", {
+  "p_member_id":"<member-uuid>", "p_limit":20, "p_offset":0,
+  "p_start_date":"2025-09-01T00:00:00Z", "p_end_date":"2025-10-01T00:00:00Z"
+})
+```
+
+### 16) `app.get_merchant_transactions(merchant_id, limit=50, offset=0, start_date=null, end_date=null)`  
+**→ TABLE(id, tx_no, tx_type, card_id, final_amount, status, created_at, total_count)**
+```python
+rows = rpc("get_merchant_transactions", {
+  "p_merchant_id":"<merchant-uuid>", "p_limit":50, "p_offset":0
+})
+```
+
+### 17) `app.get_transaction_detail(tx_no) → app.transactions`
+```python
+tx = rpc("get_transaction_detail", {"p_tx_no":"PAY0000000123"})
+```
+
+---
+
+## G. Admin Helpers
+
+### 18) `app.freeze_card(card_id) → boolean` / `app.unfreeze_card(card_id) → boolean`
+```python
+rpc("freeze_card", {"p_card_id":"<card-uuid>"})
+rpc("unfreeze_card", {"p_card_id":"<card-uuid>"})
+```
+
+### 19) `app.admin_suspend_member(member_id) → boolean` / `app.admin_suspend_merchant(merchant_id) → boolean`
+```python
+rpc("admin_suspend_member", {"p_member_id":"<member-uuid>"})
+rpc("admin_suspend_merchant", {"p_merchant_id":"<merchant-uuid>"})
+```
+
+---
+
+## H. Common error codes (map these in your client)
+
+| Code | Meaning / Action |
+|---|---|
+| `INVALID_QR` | The QR plain token format is invalid. |
+| `QR_EXPIRED_OR_INVALID` | No matching, unexpired QR token; re‑scan or re‑issue. |
+| `MERCHANT_NOT_FOUND_OR_INACTIVE` | Merchant code invalid or inactive. |
+| `NOT_MERCHANT_USER` | Caller is not a user of the merchant. |
+| `CARD_NOT_FOUND_OR_INACTIVE` / `CARD_NOT_ACTIVE` | Card missing or not active. |
+| `CARD_EXPIRED` | `expires_at` passed. |
+| `INSUFFICIENT_BALANCE` | Not enough balance for charge. |
+| `UNSUPPORTED_CARD_TYPE_FOR_PAYMENT` | Voucher flow not supported in this RPC. |
+| `INVALID_RECHARGE_AMOUNT` | `amount <= 0`. |
+| `ORIGINAL_TX_NOT_FOUND` | Refund target not found for merchant. |
+| `ONLY_COMPLETED_PAYMENT_REFUNDABLE` | Only completed payments are refundable. |
+| `REFUND_EXCEEDS_REMAINING` | Refund exceeds remaining refundable amount. |
+| `INVALID_BINDING_PASSWORD` | Wrong binding password for shared card. |
+| `ONLY_OWNER_MEMBER_CAN_CLAIM_OWNER_ROLE` | Non-owner member tried to claim owner role. |
+| `CANNOT_REMOVE_LAST_OWNER` | Prevent removing the last owner. |
+| `CARD_OWNER_NOT_DEFINED` | Data inconsistency; card has no owner binding defined. |
+
+**Python mapping helper**
+
+```python
+KNOWN = {
+    "INVALID_QR": "請重新出示支付碼",
+    "QR_EXPIRED_OR_INVALID": "支付碼已失效，請重試",
+    "INSUFFICIENT_BALANCE": "餘額不足",
+    # ... extend as needed
+}
+def humanize_error(exc: Exception) -> str:
+    msg = str(exc)
+    for k, v in KNOWN.items():
+        if k in msg:
+            return v
+    return "操作失敗，請稍後再試"
+```
+
+---
+
+## I. Typical flows
+
+### Member signup
+1. `create_member_profile(...)`
+2. `bind_external_identity(...)` (wechat, etc.)
+
+### Generate payment QR
+- Standard card: app triggers `rotate_card_qr(card_id, 300)` on demand.
+- Prepaid/corporate: schedule `cron_rotate_qr_tokens(300)`; clients read the current QR plain from rotation call.
+
+### Merchant charge
+- Scanner reads QR plain → `merchant_charge_by_qr(...)` with idempotency key.
+
+### Refunds
+- `merchant_refund_tx(...)` supports partial/multiple refunds.
+
+### Recharge
+- `user_recharge_card(...)` with idempotency key and external order id for reconciliation.
+
+### Settlement
+- `generate_settlement(...)` then list via `list_settlements(...)`.
+
+---
+
+## J. Permissions & RLS notes
+
+- Prefer routing **all writes through RPC**; keep table writes locked down by RLS.  
+- Grant execution per role group (examples):  
+  - **Merchant API**: `merchant_charge_by_qr`, `merchant_refund_tx`, `get_merchant_transactions`, `generate_settlement`, `list_settlements`.  
+  - **Member App**: `rotate_card_qr`, `user_recharge_card`, `get_member_transactions`.  
+  - **Platform**: `create_member_profile`, `bind_external_identity`, `bind_member_to_card`, `unbind_member_from_card`, `freeze_card`, `admin_suspend_*`, `cron_rotate_qr_tokens`.
+
+---
+
+*End of document.*
