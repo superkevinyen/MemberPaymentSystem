@@ -1,10 +1,10 @@
 from typing import List, Optional, Dict, Any
-from .base_service import BaseService
+from .base_service import BaseService, QueryService
 from models.member import Member
 from models.card import Card, CardBinding
 from models.transaction import Transaction
 
-class MemberService(BaseService):
+class MemberService(QueryService):
     """會員服務"""
     
     def create_member(self, name: str, phone: str, email: str,

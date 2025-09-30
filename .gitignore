@@ -266,3 +266,4 @@ secrets.json
 
 # YoYo AI version control directory
 .yoyo/
+.serena/
