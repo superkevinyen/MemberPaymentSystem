@@ -16,6 +16,7 @@ class AdminService(BaseService):
                             binding_user_org: Optional[str] = None,
                             binding_org_id: Optional[str] = None) -> str:
         """創建會員檔案（管理員操作）"""
+        self.require_role('admin')
         self.log_operation("管理員創建會員", {
             "name": name,
             "phone": phone,
@@ -41,6 +42,7 @@ class AdminService(BaseService):
     
     def freeze_card(self, card_id: str) -> bool:
         """凍結卡片"""
+        self.require_role('admin')
         self.log_operation("凍結卡片", {"card_id": card_id})
         
         params = {"p_card_id": card_id}
@@ -60,6 +62,7 @@ class AdminService(BaseService):
     
     def unfreeze_card(self, card_id: str) -> bool:
         """解凍卡片"""
+        self.require_role('admin')
         self.log_operation("解凍卡片", {"card_id": card_id})
         
         params = {"p_card_id": card_id}
@@ -79,6 +82,7 @@ class AdminService(BaseService):
     
     def suspend_member(self, member_id: str) -> bool:
         """暫停會員"""
+        self.require_role('admin')
         self.log_operation("暫停會員", {"member_id": member_id})
         
         params = {"p_member_id": member_id}
@@ -98,6 +102,7 @@ class AdminService(BaseService):
     
     def suspend_merchant(self, merchant_id: str) -> bool:
         """暫停商戶"""
+        self.require_role('admin')
         self.log_operation("暫停商戶", {"merchant_id": merchant_id})
         
         params = {"p_merchant_id": merchant_id}
@@ -118,6 +123,7 @@ class AdminService(BaseService):
     def update_points_and_level(self, card_id: str, delta_points: int, 
                                reason: str = "manual_adjust") -> bool:
         """調整積分和等級"""
+        self.require_role('admin')
         self.log_operation("調整積分", {
             "card_id": card_id,
             "delta_points": delta_points,
@@ -148,6 +154,7 @@ class AdminService(BaseService):
     
     def batch_rotate_qr_tokens(self, ttl_seconds: int = 300) -> int:
         """批量輪換 QR 碼"""
+        self.require_role('admin')
         self.log_operation("批量輪換 QR 碼", {"ttl_seconds": ttl_seconds})
         
         from services.qr_service import QRService
@@ -277,8 +284,3 @@ class AdminService(BaseService):
             self.logger.error(f"獲取卡片詳情失敗: {card_id}, 錯誤: {e}")
             return None
     
-    def validate_admin_access(self) -> bool:
-        """驗證管理員訪問權限"""
-        # 這裡可以添加更複雜的權限驗證邏輯
-        # 目前簡化為總是返回 True
-        return True

@@ -2,6 +2,7 @@ from typing import Optional, Dict, List
 from services.merchant_service import MerchantService
 from services.payment_service import PaymentService
 from services.qr_service import QRService
+from services.auth_service import AuthService
 from ui.components.menu import Menu, SimpleMenu
 from ui.components.table import Table, PaginatedTable
 from ui.components.form import QuickForm
@@ -16,23 +17,29 @@ from datetime import datetime
 class MerchantUI:
     """商戶用戶界面"""
     
-    def __init__(self):
+    def __init__(self, auth_service: AuthService):
         self.merchant_service = MerchantService()
         self.payment_service = PaymentService()
         self.qr_service = QRService()
+        self.auth_service = auth_service
+        
+        # 設定 auth_service
+        self.merchant_service.set_auth_service(auth_service)
+        self.payment_service.set_auth_service(auth_service)
+        self.qr_service.set_auth_service(auth_service)
+        
+        # 從 auth_service 取得資訊
+        profile = auth_service.get_current_user()
+        self.current_merchant_id = profile.get('merchant_id') if profile else None
+        self.current_merchant_code = profile.get('merchant_code') if profile else None
+        self.current_merchant_name = profile.get('merchant_name') if profile else None
+        self.current_operator = profile.get('merchant_name') if profile else None
         self.current_merchant: Optional[Merchant] = None
-        self.current_merchant_code: Optional[str] = None
-        self.current_merchant_name: Optional[str] = None
-        self.current_operator: Optional[str] = None
     
     def start(self):
         """啟動商戶界面"""
         try:
-            # 商戶登入
-            if not self._merchant_login():
-                return
-            
-            # 主菜單
+            # 直接顯示主菜單（已在 main.py 完成登入）
             self._show_main_menu()
             
         except KeyboardInterrupt:
@@ -40,50 +47,8 @@ class MerchantUI:
         except Exception as e:
             BaseUI.show_error(f"System error: {e}")
         finally:
-            if self.current_merchant_code:
+            if self.current_merchant_id:
                 ui_logger.log_logout("merchant")
-    
-    def _merchant_login(self) -> bool:
-        """商戶登入流程"""
-        BaseUI.clear_screen()
-        BaseUI.show_header("Merchant POS Login")
-        
-        print("Please enter merchant code to login")
-        merchant_code = input("Merchant Code: ").strip().upper()
-        
-        if not merchant_code:
-            BaseUI.show_error("Please enter merchant code")
-            BaseUI.pause()
-            return False
-        
-        # 輸入操作員名稱
-        operator = input("Operator Name (Optional): ").strip()
-        
-        try:
-            merchant = self.merchant_service.validate_merchant_login(merchant_code)
-            
-            if not merchant:
-                BaseUI.show_error("Merchant code does not exist or is disabled")
-                BaseUI.pause()
-                return False
-            
-            self.current_merchant = merchant
-            self.current_merchant_code = merchant_code
-            self.current_merchant_name = merchant.name
-            self.current_operator = operator or "Unknown Operator"
-            
-            ui_logger.log_login("merchant", merchant_code)
-            
-            BaseUI.show_success(f"Login successful! Merchant: {merchant.name}")
-            if operator:
-                print(f"Operator: {operator}")
-            BaseUI.pause()
-            return True
-            
-        except Exception as e:
-            BaseUI.show_error(f"Login failed: {e}")
-            BaseUI.pause()
-            return False
     
     def _show_main_menu(self):
         """顯示主菜單"""

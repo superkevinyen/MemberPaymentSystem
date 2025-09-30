@@ -2,6 +2,7 @@ from typing import Optional, Dict, List
 from services.admin_service import AdminService
 from services.member_service import MemberService
 from services.qr_service import QRService
+from services.auth_service import AuthService
 from ui.components.menu import Menu, SimpleMenu
 from ui.components.table import Table
 from ui.components.form import QuickForm, ValidationForm
@@ -13,20 +14,25 @@ from utils.logger import ui_logger
 class AdminUI:
     """管理員用戶界面"""
     
-    def __init__(self):
+    def __init__(self, auth_service: AuthService):
         self.admin_service = AdminService()
         self.member_service = MemberService()
         self.qr_service = QRService()
-        self.current_admin_name: Optional[str] = None
+        self.auth_service = auth_service
+        
+        # 設定 auth_service
+        self.admin_service.set_auth_service(auth_service)
+        self.member_service.set_auth_service(auth_service)
+        self.qr_service.set_auth_service(auth_service)
+        
+        # 從 auth_service 取得資訊
+        profile = auth_service.get_current_user()
+        self.current_admin_name = profile.get('name', 'Admin') if profile else 'Admin'
     
     def start(self):
         """啟動管理員界面"""
         try:
-            # 管理員身份驗證
-            if not self._admin_login():
-                return
-            
-            # 主菜單
+            # 直接顯示主菜單（已在 main.py 完成登入）
             self._show_main_menu()
             
         except KeyboardInterrupt:
@@ -34,44 +40,7 @@ class AdminUI:
         except Exception as e:
             BaseUI.show_error(f"System error: {e}")
         finally:
-            if self.current_admin_name:
-                ui_logger.log_logout("admin")
-    
-    def _admin_login(self) -> bool:
-        """管理員身份驗證"""
-        BaseUI.clear_screen()
-        BaseUI.show_header("Admin Console Login")
-        
-        print("Please enter admin information for authentication")
-        admin_name = input("Admin Name: ").strip()
-        
-        if not admin_name:
-            BaseUI.show_error("Please enter admin name")
-            BaseUI.pause()
-            return False
-        
-        # 簡化的身份驗證（實際應用中應該有更嚴格的驗證）
-        admin_code = input("Admin Password: ").strip()
-        
-        try:
-            # 驗證管理員權限
-            if not self.admin_service.validate_admin_access():
-                BaseUI.show_error("Admin permission validation failed")
-                BaseUI.pause()
-                return False
-            
-            self.current_admin_name = admin_name
-            
-            ui_logger.log_login("admin", admin_name)
-            
-            BaseUI.show_success(f"Login successful! Admin: {admin_name}")
-            BaseUI.pause()
-            return True
-            
-        except Exception as e:
-            BaseUI.show_error(f"Login failed: {e}")
-            BaseUI.pause()
-            return False
+            ui_logger.log_logout("admin")
     
     def _show_main_menu(self):
         """顯示主菜單"""

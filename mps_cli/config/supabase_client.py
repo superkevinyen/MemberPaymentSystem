@@ -13,6 +13,7 @@ class SupabaseClient:
         self.service_role_key = settings.database.service_role_key
         self.anon_key = settings.database.anon_key
         self.client: Optional[Client] = None
+        self.auth_session = None
         self._initialize_client()
     
     def _initialize_client(self):
@@ -140,6 +141,60 @@ class SupabaseClient:
         except Exception as e:
             logger.error(f"Supabase 連接測試失敗: {e}")
             return False
+    
+    def sign_in_with_password(self, email: str, password: str) -> Dict[str, Any]:
+        """使用 email 和密碼登入 (Supabase Auth)"""
+        if not self.client:
+            raise Exception("Supabase client not initialized")
+        
+        try:
+            logger.debug(f"Attempting login: {email}")
+            response = self.client.auth.sign_in_with_password({
+                "email": email,
+                "password": password
+            })
+            
+            if response.session:
+                self.auth_session = response.session
+                logger.info(f"Login successful: {email}")
+                return {
+                    "user": response.user,
+                    "session": response.session
+                }
+            else:
+                raise Exception("Login failed: Invalid credentials")
+                
+        except Exception as e:
+            logger.error(f"Login failed: {email}, error: {e}")
+            raise Exception(f"Login failed: {e}")
+    
+    def sign_out(self):
+        """登出"""
+        if not self.client:
+            return
+        
+        try:
+            self.client.auth.sign_out()
+            self.auth_session = None
+            logger.info("Logout successful")
+        except Exception as e:
+            logger.error(f"Logout failed: {e}")
+    
+    def get_current_user(self) -> Optional[Dict]:
+        """取得當前登入用戶"""
+        if not self.client:
+            return None
+        
+        try:
+            response = self.client.auth.get_user()
+            return response.user if response else None
+        except Exception as e:
+            logger.error(f"Get user failed: {e}")
+            return None
+    
+    def is_authenticated(self) -> bool:
+        """檢查是否已登入"""
+        return self.auth_session is not None
 
 # 全局 Supabase 客戶端實例
 supabase_client = SupabaseClient()

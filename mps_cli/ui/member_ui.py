@@ -2,6 +2,7 @@ from typing import Optional, List, Dict
 from services.member_service import MemberService
 from services.payment_service import PaymentService
 from services.qr_service import QRService
+from services.auth_service import AuthService
 from ui.components.menu import Menu, SimpleMenu
 from ui.components.table import Table, PaginatedTable
 from ui.components.form import QuickForm, ValidationForm
@@ -16,22 +17,27 @@ from decimal import Decimal
 class MemberUI:
     """會員用戶界面"""
     
-    def __init__(self):
+    def __init__(self, auth_service: AuthService):
         self.member_service = MemberService()
         self.payment_service = PaymentService()
         self.qr_service = QRService()
+        self.auth_service = auth_service
+        
+        # 設定 auth_service
+        self.member_service.set_auth_service(auth_service)
+        self.payment_service.set_auth_service(auth_service)
+        self.qr_service.set_auth_service(auth_service)
+        
+        # 從 auth_service 取得資訊
+        profile = auth_service.get_current_user()
+        self.current_member_id = profile.get('member_id') if profile else None
+        self.current_member_name = profile.get('name') if profile else None
         self.current_member: Optional[Member] = None
-        self.current_member_id: Optional[str] = None
-        self.current_member_name: Optional[str] = None
     
     def start(self):
         """啟動會員界面"""
         try:
-            # 會員登入
-            if not self._member_login():
-                return
-            
-            # 主菜單
+            # 直接顯示主菜單（已在 main.py 完成登入）
             self._show_main_menu()
             
         except KeyboardInterrupt:
@@ -41,42 +47,6 @@ class MemberUI:
         finally:
             if self.current_member_id:
                 ui_logger.log_logout("member")
-    
-    def _member_login(self) -> bool:
-        """會員登入流程"""
-        BaseUI.clear_screen()
-        BaseUI.show_header("Member System Login")
-        
-        print("Please enter Member ID or phone number to login")
-        identifier = input("Member ID/Phone: ").strip()
-        
-        if not identifier:
-            BaseUI.show_error("Please enter Member ID or phone number")
-            BaseUI.pause()
-            return False
-        
-        try:
-            member = self.member_service.validate_member_login(identifier)
-            
-            if not member:
-                BaseUI.show_error("Member does not exist or status abnormal")
-                BaseUI.pause()
-                return False
-            
-            self.current_member = member
-            self.current_member_id = member.id
-            self.current_member_name = member.name
-            
-            ui_logger.log_login("member", identifier)
-            
-            BaseUI.show_success(f"Login successful! Welcome {member.name}")
-            BaseUI.pause()
-            return True
-            
-        except Exception as e:
-            BaseUI.show_error(f"Login failed: {e}")
-            BaseUI.pause()
-            return False
     
     def _show_main_menu(self):
         """顯示主菜單"""

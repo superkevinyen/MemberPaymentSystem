@@ -11,6 +11,7 @@ class BaseService(ABC):
         self.client = supabase_client
         self.logger = get_logger(self.__class__.__name__)
         self.error_handler = error_handler
+        self.auth_service = None
     
     def rpc_call(self, function_name: str, params: Dict[str, Any]) -> Any:
         """安全的 RPC 調用"""
@@ -174,6 +175,35 @@ class BaseService(ABC):
             return Exception(self.error_handler.handle_with_context(error, context))
         else:
             return self.error_handler.handle_rpc_error(error)
+    
+    def set_auth_service(self, auth_service):
+        """設定認證服務"""
+        self.auth_service = auth_service
+    
+    def require_role(self, required_role: str):
+        """要求特定角色權限"""
+        if not self.auth_service:
+            raise Exception("AUTH_SERVICE_NOT_INITIALIZED")
+        
+        if not self.auth_service.check_permission(required_role):
+            raise Exception(f"PERMISSION_DENIED: {required_role} role required")
+    
+    def get_current_user_id(self) -> Optional[str]:
+        """取得當前用戶 ID"""
+        if not self.auth_service or not self.auth_service.current_user:
+            return None
+        
+        role = self.auth_service.current_role
+        user = self.auth_service.current_user
+        
+        if role in ["admin", "super_admin"]:
+            return user.get("id")
+        elif role == "merchant":
+            return user.get("merchant_id")
+        elif role == "member":
+            return user.get("member_id")
+        
+        return None
 
 class QueryService(BaseService):
     """查詢服務基類"""

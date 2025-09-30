@@ -13,6 +13,7 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 from config.settings import settings
+from ui.login_ui import LoginUI
 from ui.member_ui import MemberUI
 from ui.merchant_ui import MerchantUI
 from ui.admin_ui import AdminUI
@@ -41,24 +42,39 @@ def main():
         # 顯示歡迎界面
         show_welcome()
         
-        # 選擇角色
-        role = select_role()
+        # 統一登入
+        login_ui = LoginUI()
+        login_result = login_ui.show_login()
         
-        # 啟動對應界面
-        if role == "member":
-            logger.info("Starting member interface")
-            MemberUI().start()
-        elif role == "merchant":
-            logger.info("Starting merchant interface")
-            MerchantUI().start()
-        elif role == "admin":
-            logger.info("Starting admin interface")
-            AdminUI().start()
-        else:
-            BaseUI.show_goodbye()
+        if not login_result:
+            print("👋 再見！")
+            return
+        
+        # 根據角色進入對應界面
+        role = login_result["role"]
+        auth_service = login_ui.auth_service
+        
+        try:
+            if role in ["admin", "super_admin"]:
+                logger.info("Starting admin interface")
+                admin_ui = AdminUI(auth_service)
+                admin_ui.start()
+            elif role == "merchant":
+                logger.info("Starting merchant interface")
+                merchant_ui = MerchantUI(auth_service)
+                merchant_ui.start()
+            elif role == "member":
+                logger.info("Starting member interface")
+                member_ui = MemberUI(auth_service)
+                member_ui.start()
+            else:
+                BaseUI.show_error(f"Unknown role: {role}")
+        finally:
+            # 登出
+            auth_service.logout()
             
     except KeyboardInterrupt:
-        print("\n▸ Goodbye!")
+        print("\n👋 再見！")
         logger.info("User interrupted program")
     except Exception as e:
         BaseUI.show_error(f"System error: {e}")
@@ -69,93 +85,27 @@ def main():
 
 def show_welcome():
     """顯示歡迎界面"""
-    BaseUI.show_welcome("MPS System")
-    
-    print("▸ System Features")
-    print("  ├─ MEMBER    Member User: View cards, generate QR codes, recharge")
-    print("  ├─ MERCHANT  Merchant User: Scan & charge, process refunds")
-    print("  └─ ADMIN     Administrator: Member management, card management")
+    BaseUI.clear_screen()
+    print("╔═══════════════════════════════════════╗")
+    print("║        歡迎使用 MPS 系統              ║")
+    print("║     Member Payment System             ║")
+    print("╚═══════════════════════════════════════╝")
     print()
 
-def select_role() -> str:
-    """選擇用戶角色"""
-    roles = {
-        "1": ("member", "Member User", "[MEMBER]"),
-        "2": ("merchant", "Merchant User", "[MERCHANT]"),
-        "3": ("admin", "Administrator", "[ADMIN]"),
-        "4": ("exit", "Exit System", "[EXIT]")
-    }
-    
-    print("▸ Please select your role")
-    for key, (role, name, prefix) in roles.items():
-        print(f"  {key}. {prefix:<12} {name}")
-    
-    while True:
-        try:
-            choice = input("Please select (1-4): ").strip()
-            if choice in roles:
-                selected_role, role_name, icon = roles[choice]
-                
-                if selected_role == "exit":
-                    return "exit"
-                
-                print(f"\n▸ You selected: {role_name}")
-                
-                # 確認選擇
-                if BaseUI.confirm_action("Confirm to enter?", True):
-                    logger.info(f"User selected role: {selected_role}")
-                    return selected_role
-                else:
-                    print()  # 重新選擇
-            else:
-                print("✗ Please select 1-4")
-        except KeyboardInterrupt:
-            return "exit"
-
 def member_main():
-    """會員用戶入口"""
-    try:
-        setup_logging()
-        settings.validate()
-        
-        from config.supabase_client import supabase_client
-        if not supabase_client.test_connection():
-            BaseUI.show_error("Unable to connect to database")
-            return
-        
-        MemberUI().start()
-    except Exception as e:
-        BaseUI.show_error(f"Member system error: {e}")
+    """會員用戶入口（已棄用，請使用統一登入）"""
+    print("⚠️  Please use unified login: python main.py")
+    print("   This direct entry method has been deprecated")
 
 def merchant_main():
-    """商戶用戶入口"""
-    try:
-        setup_logging()
-        settings.validate()
-        
-        from config.supabase_client import supabase_client
-        if not supabase_client.test_connection():
-            BaseUI.show_error("Unable to connect to database")
-            return
-        
-        MerchantUI().start()
-    except Exception as e:
-        BaseUI.show_error(f"Merchant system error: {e}")
+    """商戶用戶入口（已棄用，請使用統一登入）"""
+    print("⚠️  Please use unified login: python main.py")
+    print("   This direct entry method has been deprecated")
 
 def admin_main():
-    """管理員入口"""
-    try:
-        setup_logging()
-        settings.validate()
-        
-        from config.supabase_client import supabase_client
-        if not supabase_client.test_connection():
-            BaseUI.show_error("Unable to connect to database")
-            return
-        
-        AdminUI().start()
-    except Exception as e:
-        BaseUI.show_error(f"Admin system error: {e}")
+    """管理員入口（已棄用，請使用統一登入）"""
+    print("⚠️  Please use unified login: python main.py")
+    print("   This direct entry method has been deprecated")
 
 def test_connection():
     """測試數據庫連接"""
