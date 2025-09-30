@@ -5,7 +5,11 @@
 -- 修改：所有引用改為 public schema，添加 RLS 兼容性，新增認證函數
 -- ============================================================================
 
--- 0) DROP ALL EXISTING FUNCTIONS (清除所有現有函數以重新建立)
+-- 0) ENABLE REQUIRED EXTENSIONS (啟用必要的擴展)
+-- pgcrypto: 用於密碼加密 (gen_salt, crypt 函數)
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- 1) DROP ALL EXISTING FUNCTIONS (清除所有現有函數以重新建立)
 DROP FUNCTION IF EXISTS test_connection() CASCADE;
 DROP FUNCTION IF EXISTS get_merchant_by_auth_user() CASCADE;
 DROP FUNCTION IF EXISTS create_test_member(text, text, text) CASCADE;
@@ -293,7 +297,7 @@ BEGIN
     RAISE EXCEPTION 'PASSWORD_NOT_SET';
   END IF;
   
-  IF NOT (v_member.password_hash = crypt(p_password, v_member.password_hash)) THEN
+  IF NOT (v_member.password_hash = extensions.crypt(p_password, v_member.password_hash)) THEN
     INSERT INTO audit.event_log(actor_user_id, action, object_type, object_id, context, happened_at)
     VALUES (NULL, 'LOGIN_FAILED', 'member_profiles', v_member.id, 
             jsonb_build_object('identifier', p_identifier), now_utc());
@@ -343,7 +347,7 @@ BEGIN
     RAISE EXCEPTION 'PASSWORD_NOT_SET';
   END IF;
   
-  IF NOT (v_merchant.password_hash = crypt(p_password, v_merchant.password_hash)) THEN
+  IF NOT (v_merchant.password_hash = extensions.crypt(p_password, v_merchant.password_hash)) THEN
     INSERT INTO audit.event_log(actor_user_id, action, object_type, object_id, context, happened_at)
     VALUES (NULL, 'LOGIN_FAILED', 'merchants', v_merchant.id, 
             jsonb_build_object('code', p_merchant_code), now_utc());
@@ -380,7 +384,7 @@ BEGIN
   END IF;
   
   UPDATE member_profiles
-  SET password_hash = crypt(p_password, gen_salt('bf')),
+  SET password_hash = extensions.crypt(p_password, extensions.gen_salt('bf')),
       updated_at = now_utc()
   WHERE id = p_member_id;
   
@@ -413,7 +417,7 @@ BEGIN
   END IF;
   
   UPDATE merchants
-  SET password_hash = crypt(p_password, gen_salt('bf')),
+  SET password_hash = extensions.crypt(p_password, extensions.gen_salt('bf')),
       updated_at = now_utc()
   WHERE id = p_merchant_id;
   
@@ -437,6 +441,7 @@ CREATE OR REPLACE FUNCTION create_member_profile(
   p_name               text,
   p_phone              text,
   p_email              text,
+  p_password           text DEFAULT NULL,   -- 新增：會員密碼
   p_binding_user_org   text DEFAULT NULL,   -- e.g. 'wechat'
   p_binding_org_id     text DEFAULT NULL,   -- e.g. openid
   p_default_card_type  card_type DEFAULT 'standard'     -- always issues standard; arg reserved
@@ -445,14 +450,20 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 DECLARE
-  v_member_id  uuid := gen_random_uuid();
-  v_card_id    uuid := gen_random_uuid();
+  v_member_id  uuid := extensions.gen_random_uuid();
+  v_card_id    uuid := extensions.gen_random_uuid();
+  v_password_hash text := NULL;
 BEGIN
   PERFORM sec.fixed_search_path();
 
+  -- 處理密碼雜湊
+  IF p_password IS NOT NULL AND length(p_password) >= 6 THEN
+    v_password_hash := extensions.crypt(p_password, extensions.gen_salt('bf'));
+  END IF;
+
   -- 1) Create member
-  INSERT INTO member_profiles(id, name, phone, email, status, created_at, updated_at)
-  VALUES (v_member_id, p_name, p_phone, p_email, 'active', now_utc(), now_utc());
+  INSERT INTO member_profiles(id, name, phone, email, password_hash, status, created_at, updated_at)
+  VALUES (v_member_id, p_name, p_phone, p_email, v_password_hash, 'active', now_utc(), now_utc());
 
   -- 2) Auto issue a STANDARD card (1:1; password NULL)
   INSERT INTO member_cards(id, card_no, owner_member_id, card_type, level, discount, points, balance, status, created_at, updated_at, binding_password_hash)
@@ -528,7 +539,7 @@ BEGIN
     END IF;
 
     IF v_card.binding_password_hash IS NOT NULL THEN
-      IF p_binding_password IS NULL OR NOT (v_card.binding_password_hash = crypt(p_binding_password, v_card.binding_password_hash)) THEN
+      IF p_binding_password IS NULL OR NOT (v_card.binding_password_hash = extensions.crypt(p_binding_password, v_card.binding_password_hash)) THEN
         RAISE EXCEPTION 'INVALID_BINDING_PASSWORD';
       END IF;
     END IF;
@@ -585,12 +596,12 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 DECLARE
-  v_plain text := encode(gen_random_bytes(32),'base64');
+  v_plain text := encode(extensions.gen_random_bytes(32),'base64');
   v_hash  text;
   v_expires timestamptz := now_utc() + make_interval(secs => GREATEST(p_ttl_seconds, 60));
 BEGIN
   PERFORM sec.fixed_search_path();
-  v_hash := crypt(v_plain, gen_salt('bf'));
+  v_hash := extensions.crypt(v_plain, extensions.gen_salt('bf'));
 
   -- Upsert current QR state
   INSERT INTO card_qr_state(card_id, token_hash, updated_at, expires_at)
@@ -643,7 +654,7 @@ BEGIN
   SELECT s.card_id INTO v_card_id
   FROM card_qr_state s
   WHERE s.expires_at > now_utc()
-    AND s.token_hash = crypt(p_qr_plain, s.token_hash)
+    AND s.token_hash = extensions.crypt(p_qr_plain, s.token_hash)
   LIMIT 1;
 
   IF v_card_id IS NULL THEN
@@ -673,8 +684,8 @@ BEGIN
   FOR r IN
     SELECT id FROM member_cards WHERE status='active' AND card_type IN ('prepaid','corporate')
   LOOP
-    v_plain := encode(gen_random_bytes(32),'base64');
-    v_hash := crypt(v_plain, gen_salt('bf'));
+    v_plain := encode(extensions.gen_random_bytes(32),'base64');
+    v_hash := extensions.crypt(v_plain, extensions.gen_salt('bf'));
     INSERT INTO card_qr_state(card_id, token_hash, updated_at, expires_at)
     VALUES (r.id, v_hash, now_utc(), v_expires)
     ON CONFLICT (card_id) DO UPDATE
@@ -714,7 +725,7 @@ DECLARE
   v_card member_cards%ROWTYPE;
   v_disc numeric(4,3) := 1.000;
   v_final numeric(12,2);
-  v_tx_id uuid := gen_random_uuid();
+  v_tx_id uuid := extensions.gen_random_uuid();
   v_tx_no text;
   v_ref_exists uuid;
 BEGIN
@@ -822,7 +833,7 @@ BEGIN
   -- Point ledger
   IF v_card.card_type IN ('standard','prepaid') THEN
     INSERT INTO point_ledger(id, card_id, tx_id, change, balance_before, balance_after, reason, created_at)
-    VALUES (gen_random_uuid(), v_card.id, v_tx_id, floor(p_raw_amount)::int, v_card.points,
+    VALUES (extensions.gen_random_uuid(), v_card.id, v_tx_id, floor(p_raw_amount)::int, v_card.points,
             (SELECT points FROM member_cards WHERE id=v_card.id), 'payment_earn', now_utc());
   END IF;
 
@@ -850,7 +861,7 @@ DECLARE
   v_is_user boolean;
   v_orig transactions%ROWTYPE;
   v_left numeric(12,2);
-  v_ref_tx_id uuid := gen_random_uuid();
+  v_ref_tx_id uuid := extensions.gen_random_uuid();
   v_ref_tx_no text;
 BEGIN
   PERFORM sec.fixed_search_path();
@@ -913,7 +924,7 @@ SECURITY DEFINER
 AS $$
 DECLARE
   v_card member_cards%ROWTYPE;
-  v_tx_id uuid := gen_random_uuid();
+  v_tx_id uuid := extensions.gen_random_uuid();
   v_tx_no text;
 BEGIN
   PERFORM sec.fixed_search_path();
@@ -1019,7 +1030,7 @@ BEGIN
   WHERE id = v_card.id;
 
   INSERT INTO point_ledger(id, card_id, tx_id, change, balance_before, balance_after, reason, created_at)
-  VALUES (gen_random_uuid(), v_card.id, NULL, p_delta_points, v_card.points, v_new_points, p_reason, now_utc());
+  VALUES (extensions.gen_random_uuid(), v_card.id, NULL, p_delta_points, v_card.points, v_new_points, p_reason, now_utc());
 
   INSERT INTO audit.event_log(actor_user_id, action, object_type, object_id, context, happened_at)
   VALUES (auth.uid(), 'POINTS_ADJUST', 'member_cards', v_card.id, 
@@ -1110,7 +1121,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 DECLARE
-  v_id uuid := gen_random_uuid();
+  v_id uuid := extensions.gen_random_uuid();
   v_total numeric(12,2);
   v_count bigint;
 BEGIN
@@ -1323,7 +1334,7 @@ BEGIN
   PERFORM sec.fixed_search_path();
   
   -- Get current auth user or create a test binding
-  v_auth_id := COALESCE(auth.uid(), gen_random_uuid());
+  v_auth_id := COALESCE(auth.uid(), extensions.gen_random_uuid());
   
   -- Create member with auth binding
   SELECT create_member_profile(

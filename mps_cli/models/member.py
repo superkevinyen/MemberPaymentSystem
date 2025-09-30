@@ -15,6 +15,8 @@ class Member(BaseModel, StatusMixin, TimestampMixin):
     binding_org_id: Optional[str] = None
     role: Optional[str] = None
     owner_info: Optional[Dict[str, Any]] = None
+    auth_user_id: Optional[str] = None
+    password_hash: Optional[str] = None
     
     def get_display_name(self) -> str:
         """獲取顯示名稱"""

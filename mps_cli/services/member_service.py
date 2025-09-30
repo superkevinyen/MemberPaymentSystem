@@ -7,14 +7,16 @@ from models.transaction import Transaction
 class MemberService(BaseService):
     """會員服務"""
     
-    def create_member(self, name: str, phone: str, email: str, 
+    def create_member(self, name: str, phone: str, email: str,
+                     password: Optional[str] = None,
                      binding_user_org: Optional[str] = None,
                      binding_org_id: Optional[str] = None) -> str:
         """創建新會員"""
         self.log_operation("創建會員", {
-            "name": name, 
-            "phone": phone, 
+            "name": name,
+            "phone": phone,
             "email": email,
+            "has_password": bool(password),
             "has_external_binding": bool(binding_user_org and binding_org_id)
         })
         
@@ -22,6 +24,7 @@ class MemberService(BaseService):
             "p_name": name,
             "p_phone": phone,
             "p_email": email,
+            "p_password": password,
             "p_binding_user_org": binding_user_org,
             "p_binding_org_id": binding_org_id,
             "p_default_card_type": "standard"
