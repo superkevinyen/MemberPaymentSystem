@@ -3,7 +3,6 @@
 # 卡片類型
 CARD_TYPES = {
     'standard': '標準卡',
-    'prepaid': '預付卡',
     'corporate': '企業卡',
     'voucher': '優惠券卡'
 }

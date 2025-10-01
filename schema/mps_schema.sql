@@ -22,6 +22,7 @@ DROP TABLE IF EXISTS idempotency_registry CASCADE;
 DROP TABLE IF EXISTS tx_registry CASCADE;
 DROP TABLE IF EXISTS card_qr_history CASCADE;
 DROP TABLE IF EXISTS card_qr_state CASCADE;
+DROP TABLE IF EXISTS app_sessions CASCADE;
 DROP TABLE IF EXISTS merchant_users CASCADE;
 DROP TABLE IF EXISTS admin_users CASCADE;
 DROP TABLE IF EXISTS merchants CASCADE;
@@ -54,12 +55,13 @@ CREATE SCHEMA audit;
 REVOKE ALL ON SCHEMA audit FROM public;
 
 -- 1) ENUMS (在 public schema 中創建)
-do $$ begin create type card_type as enum ('standard','prepaid','voucher','corporate'); exception when duplicate_object then null; end $$;
+do $$ begin create type card_type as enum ('standard','voucher','corporate'); exception when duplicate_object then null; end $$;
 do $$ begin create type card_status as enum ('active','inactive','lost','expired','suspended','closed'); exception when duplicate_object then null; end $$;
 do $$ begin create type tx_type as enum ('payment','refund','recharge'); exception when duplicate_object then null; end $$;
 do $$ begin create type tx_status as enum ('processing','completed','failed','cancelled','refunded'); exception when duplicate_object then null; end $$;
 do $$ begin create type pay_method as enum ('balance','cash','wechat','alipay'); exception when duplicate_object then null; end $$;
 do $$ begin create type bind_role as enum ('owner','admin','member','viewer'); exception when duplicate_object then null; end $$;
+do $$ begin create type binding_status as enum ('active','inactive','suspended'); exception when duplicate_object then null; end $$;
 do $$ begin create type member_status as enum ('active','inactive','suspended','deleted'); exception when duplicate_object then null; end $$;
 do $$ begin create type settlement_status as enum ('pending','settled','failed','paid'); exception when duplicate_object then null; end $$;
 do $$ begin create type settlement_mode as enum ('realtime','t_plus_1','monthly'); exception when duplicate_object then null; end $$;
@@ -89,7 +91,6 @@ $$;
 create or replace function gen_card_no(p_type card_type) returns text language plpgsql as $$
 begin
   if p_type='standard'  then return 'STD' || lpad(nextval('seq_card_no')::text, 8, '0'); end if;
-  if p_type='prepaid'   then return 'PPD' || lpad(nextval('seq_card_no')::text, 8, '0'); end if;
   if p_type='voucher'   then return 'VCH' || lpad(nextval('seq_card_no')::text, 8, '0'); end if;
   if p_type='corporate' then return 'COR' || lpad(nextval('seq_card_no')::text, 8, '0'); end if;
   return 'CARD' || lpad(nextval('seq_card_no')::text, 8, '0');
@@ -167,14 +168,15 @@ create table member_cards (
   balance numeric(12,2) not null default 0,
   points int not null default 0,
   level int,
-  discount numeric(4,3) not null default 1.000,
-  fixed_discount numeric(4,3),
+  discount numeric(4,3) not null default 1.000,  -- 積分等級折扣
+  corporate_discount numeric(4,3),  -- 企業折扣（綁定企業卡時設置）
+  fixed_discount numeric(4,3),  -- 固定折扣（企業卡專用）
   binding_password_hash text,
   status card_status not null default 'active',
   expires_at timestamptz,
   created_at timestamptz not null default now_utc(),
   updated_at timestamptz not null default now_utc(),
-  check ( (card_type in ('standard','prepaid') and discount between 0.000 and 1.000)
+  check ( (card_type = 'standard' and discount between 0.000 and 1.000)
        or (card_type in ('voucher','corporate')) )
 );
 
@@ -199,6 +201,7 @@ create table card_bindings (
   card_id uuid not null references member_cards(id) on delete cascade,
   member_id uuid not null references member_profiles(id) on delete cascade,
   role bind_role not null default 'member',
+  status binding_status not null default 'active',
   created_at timestamptz not null default now_utc(),
   unique (card_id, member_id)
 );
@@ -216,16 +219,18 @@ create table merchants (
 );
 
 COMMENT ON COLUMN merchants.password_hash IS '商戶登入密碼雜湊';
+
 -- 3.6 Admin Users (管理員用戶表)
 CREATE TABLE admin_users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   auth_user_id uuid NOT NULL UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE,
   name text NOT NULL,
-  role text NOT NULL DEFAULT 'admin', -- admin, super_admin
+  role text NOT NULL DEFAULT 'super_admin', -- 只保留 super_admin
   permissions jsonb DEFAULT '[]'::jsonb,
   is_active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now_utc(),
-  updated_at timestamptz NOT NULL DEFAULT now_utc()
+  updated_at timestamptz NOT NULL DEFAULT now_utc(),
+  CONSTRAINT ck_admin_role CHECK (role = 'super_admin')
 );
 
 CREATE INDEX idx_admin_users_auth_user ON admin_users(auth_user_id);
@@ -236,7 +241,7 @@ BEFORE UPDATE ON admin_users
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 COMMENT ON TABLE admin_users IS '管理員用戶表，關聯 Supabase Auth';
-COMMENT ON COLUMN admin_users.role IS 'admin: 一般管理員, super_admin: 超級管理員';
+COMMENT ON COLUMN admin_users.role IS 'super_admin: 超級管理員（移除 admin 角色）';
 
 
 create table merchant_users (
@@ -247,6 +252,23 @@ create table merchant_users (
   created_at timestamptz not null default now_utc(),
   unique (merchant_id, auth_user_id)
 );
+
+-- 3.7 App Sessions (應用程式 Session 管理表)
+CREATE TABLE app_sessions (
+  session_id text PRIMARY KEY,
+  user_role text NOT NULL CHECK (user_role IN ('super_admin', 'merchant', 'member')),
+  user_id uuid NOT NULL,
+  merchant_id uuid REFERENCES merchants(id) ON DELETE CASCADE,
+  member_id uuid REFERENCES member_profiles(id) ON DELETE CASCADE,
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now_utc(),
+  last_accessed_at timestamptz NOT NULL DEFAULT now_utc()
+);
+
+CREATE INDEX idx_app_sessions_expires ON app_sessions(expires_at);
+CREATE INDEX idx_app_sessions_user ON app_sessions(user_id);
+
+COMMENT ON TABLE app_sessions IS '應用程式 Session 管理（用於自定義登入）';
 
 -- 4) QR TABLES
 create table card_qr_state (
@@ -398,6 +420,8 @@ alter table member_cards
 create index idx_cards_status on member_cards(status);
 create index idx_cards_owner_type on member_cards(owner_member_id, card_type);
 create index idx_bindings_member on card_bindings(member_id);
+create index idx_bindings_status on card_bindings(status);
+create index idx_bindings_card_status on card_bindings(card_id, status);
 create index idx_levels_level on membership_levels(level);
 
 -- 12) SEED DATA
@@ -429,24 +453,14 @@ ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE point_ledger ENABLE ROW LEVEL SECURITY;
 ALTER TABLE settlements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE admin_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_sessions ENABLE ROW LEVEL SECURITY;
 
--- ADMIN USERS - 管理員只能查看自己的資料
-CREATE POLICY "Admins can view own profile" ON admin_users
-    FOR SELECT USING (
-        auth.uid() IS NOT NULL AND
-        auth_user_id = auth.uid()
-    );
+-- ADMIN USERS - 策略定義在文件末尾（避免循環依賴）
+-- 見文件末尾的 "ADMIN_USERS RLS 策略" 部分
 
-CREATE POLICY "Super admins can view all admins" ON admin_users
-    FOR SELECT USING (
-        auth.uid() IS NOT NULL AND
-        EXISTS (
-            SELECT 1 FROM admin_users
-            WHERE auth_user_id = auth.uid()
-            AND role = 'super_admin'
-            AND is_active = true
-        )
-    );
+-- APP SESSIONS - 限制直接訪問
+CREATE POLICY "Restrict app_sessions access" ON app_sessions
+    FOR SELECT USING (false);
 
 -- MEMBER PROFILES - 只能查看自己的資料
 CREATE POLICY "Users can view own member profile" ON member_profiles
@@ -480,6 +494,110 @@ CREATE POLICY "Users can view own external identities" ON member_external_identi
 -- MEMBERSHIP LEVELS - 公開資訊，所有人可讀
 CREATE POLICY "Membership levels are public" ON membership_levels
     FOR SELECT USING (true);
+
+-- Super Admin Bypass Policies (所有表都添加 Super Admin 完全訪問權限)
+-- 使用直接查詢避免循環依賴 - admin_users 表的 RLS 已經允許查詢
+CREATE POLICY "Super admins bypass all restrictions on member_cards"
+ON member_cards FOR ALL USING (
+    auth.uid() IS NOT NULL AND
+    EXISTS (
+        SELECT 1 FROM admin_users au
+        WHERE au.auth_user_id = auth.uid()
+        AND au.role = 'super_admin'
+        AND au.is_active = true
+    )
+);
+
+CREATE POLICY "Super admins bypass all restrictions on transactions"
+ON transactions FOR ALL USING (
+    auth.uid() IS NOT NULL AND
+    EXISTS (
+        SELECT 1 FROM admin_users au
+        WHERE au.auth_user_id = auth.uid()
+        AND au.role = 'super_admin'
+        AND au.is_active = true
+    )
+);
+
+CREATE POLICY "Super admins bypass all restrictions on merchants"
+ON merchants FOR ALL USING (
+    auth.uid() IS NOT NULL AND
+    EXISTS (
+        SELECT 1 FROM admin_users au
+        WHERE au.auth_user_id = auth.uid()
+        AND au.role = 'super_admin'
+        AND au.is_active = true
+    )
+);
+
+CREATE POLICY "Super admins bypass all restrictions on member_profiles"
+ON member_profiles FOR ALL USING (
+    auth.uid() IS NOT NULL AND
+    EXISTS (
+        SELECT 1 FROM admin_users au
+        WHERE au.auth_user_id = auth.uid()
+        AND au.role = 'super_admin'
+        AND au.is_active = true
+    )
+);
+
+CREATE POLICY "Super admins bypass all restrictions on settlements"
+ON settlements FOR ALL USING (
+    auth.uid() IS NOT NULL AND
+    EXISTS (
+        SELECT 1 FROM admin_users au
+        WHERE au.auth_user_id = auth.uid()
+        AND au.role = 'super_admin'
+        AND au.is_active = true
+    )
+);
+
+CREATE POLICY "Super admins bypass all restrictions on point_ledger"
+ON point_ledger FOR ALL USING (
+    auth.uid() IS NOT NULL AND
+    EXISTS (
+        SELECT 1 FROM admin_users au
+        WHERE au.auth_user_id = auth.uid()
+        AND au.role = 'super_admin'
+        AND au.is_active = true
+    )
+);
+
+-- 為其他重要表添加 Super Admin bypass 策略
+CREATE POLICY "Super admins bypass all restrictions on card_bindings"
+ON card_bindings FOR ALL USING (
+    auth.uid() IS NOT NULL AND
+    EXISTS (
+        SELECT 1 FROM admin_users au
+        WHERE au.auth_user_id = auth.uid()
+        AND au.role = 'super_admin'
+        AND au.is_active = true
+    )
+);
+
+CREATE POLICY "Super admins bypass all restrictions on membership_levels"
+ON membership_levels FOR ALL USING (
+    auth.uid() IS NOT NULL AND
+    EXISTS (
+        SELECT 1 FROM admin_users au
+        WHERE au.auth_user_id = auth.uid()
+        AND au.role = 'super_admin'
+        AND au.is_active = true
+    )
+);
+
+-- admin_users 的策略已在上面定義，不需要重複的 bypass 策略
+
+CREATE POLICY "Super admins bypass all restrictions on app_sessions"
+ON app_sessions FOR ALL USING (
+    auth.uid() IS NOT NULL AND
+    EXISTS (
+        SELECT 1 FROM admin_users au
+        WHERE au.auth_user_id = auth.uid()
+        AND au.role = 'super_admin'
+        AND au.is_active = true
+    )
+);
 
 -- MEMBER CARDS - 只能查看自己擁有或綁定的卡片
 CREATE POLICY "Users can view own cards" ON member_cards
@@ -599,5 +717,28 @@ CREATE POLICY "Restrict idempotency_registry access" ON idempotency_registry
 
 CREATE POLICY "Restrict merchant_order_registry access" ON merchant_order_registry
     FOR SELECT USING (false);
+
+-- ============================================================================
+-- ADMIN_USERS RLS 策略（避免無限遞歸）
+-- ============================================================================
+
+-- 刪除可能有問題的舊策略
+DROP POLICY IF EXISTS "Admins can view own profile" ON admin_users;
+DROP POLICY IF EXISTS "Super admins can view all admins" ON admin_users;
+DROP POLICY IF EXISTS "Super admins bypass all restrictions on admin_users" ON admin_users;
+DROP POLICY IF EXISTS "Authenticated users can view admin_users" ON admin_users;
+DROP POLICY IF EXISTS "Only super admins can modify admin_users" ON admin_users;
+
+-- 允許所有認證用戶讀取（get_user_role 需要）
+CREATE POLICY "Authenticated users can view admin_users" ON admin_users
+    FOR SELECT USING (
+        auth.uid() IS NOT NULL
+    );
+
+-- 只有 super_admin 可以修改（使用函數避免遞歸）
+CREATE POLICY "Only super admins can modify admin_users" ON admin_users
+    FOR ALL USING (
+        get_user_role() = 'super_admin'
+    );
 
 -- End of SCHEMA ONLY (補強版) - PUBLIC SCHEMA WITH RLS

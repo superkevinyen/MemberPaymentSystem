@@ -176,9 +176,56 @@ class SupabaseClient:
         try:
             self.client.auth.sign_out()
             self.auth_session = None
+            
+            # 完全清除 session 狀態
+            if hasattr(self.client.auth, '_session'):
+                self.client.auth._session = None
+            
             logger.info("Logout successful")
         except Exception as e:
             logger.error(f"Logout failed: {e}")
+    
+    def force_reinitialize(self):
+        """強制重新初始化客戶端（用於清除所有狀態）"""
+        try:
+            # 先登出
+            self.sign_out()
+            
+            # 重新創建客戶端
+            self.client = create_client(self.url, self.anon_key)
+            self.auth_session = None
+            
+            logger.info("Client reinitialized successfully")
+        except Exception as e:
+            logger.error(f"Client reinitialization failed: {e}")
+            raise Exception(f"無法重新初始化客戶端: {e}")
+    
+    def ensure_clean_session(self):
+        """確保 session 是乾淨的（用於測試開始前）"""
+        try:
+            # 無論如何都強制重新初始化（最安全的方式）
+            logger.info("強制重新初始化客戶端以確保乾淨狀態...")
+            self.force_reinitialize()
+            
+            # 清除可能殘留的 PostgreSQL session 變數
+            try:
+                logger.info("清除 PostgreSQL session 變數...")
+                # 調用一個 RPC 來重置 session 變數
+                self.rpc("reset_session_variables", {})
+            except Exception as e:
+                # 如果沒有這個函數，忽略錯誤
+                logger.warning(f"無法清除 session 變數（可能函數不存在）: {e}")
+            
+            # 驗證已清除
+            current_user = self.get_current_user()
+            if current_user:
+                logger.error(f"重新初始化後仍有 session 殘留！")
+                raise Exception("無法清除 session")
+            
+            logger.info("Session is clean")
+        except Exception as e:
+            logger.error(f"Ensure clean session failed: {e}")
+            raise
     
     def get_current_user(self) -> Optional[Dict]:
         """取得當前登入用戶"""

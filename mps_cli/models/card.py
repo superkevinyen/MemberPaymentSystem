@@ -49,12 +49,12 @@ class Card(BaseModel, StatusMixin, TimestampMixin):
     
     def can_recharge(self) -> bool:
         """檢查是否可以充值"""
-        return (self.card_type in ['prepaid', 'corporate'] and 
+        return (self.card_type == 'standard' and 
                 self.status == 'active')
     
     def can_share(self) -> bool:
         """檢查是否可以共享"""
-        return self.card_type in ['prepaid', 'corporate']
+        return self.card_type == 'corporate'
     
     def can_generate_qr(self) -> bool:
         """檢查是否可以生成 QR 碼"""

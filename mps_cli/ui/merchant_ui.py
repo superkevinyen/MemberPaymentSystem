@@ -175,94 +175,171 @@ class MerchantUI:
         print("└─────────────────────────────────────┘")
     
     def _process_refund(self):
-        """退款處理流程"""
+        """退款處理 - 商業版（支持多次部分退款）"""
         try:
             BaseUI.clear_screen()
-            BaseUI.show_header("Process Refund")
+            print("╔═══════════════════════════════════════════════════════════════════════════╗")
+            print("║                          退款處理                                         ║")
+            print("║                  （支持多次部分退款）                                     ║")
+            print("╚═══════════════════════════════════════════════════════════════════════════╝")
             
-            # 輸入原交易號
-            original_tx_no = QuickForm.get_text("Please enter original transaction number", True,
-                                              Validator.validate_tx_no,
-                                              "Format: PAY/REF/RCG + 10 digits")
+            # Step 1: 輸入原交易號
+            tx_no = input("\n請輸入原交易號: ").strip()
             
-            # 查詢原交易詳情
-            BaseUI.show_loading("Querying original transaction...")
+            if not tx_no:
+                print("❌ 交易號不能為空")
+                BaseUI.pause()
+                return
+            
+            # Step 2: 查詢原交易
+            BaseUI.show_loading("正在查詢交易...")
             
             try:
-                original_tx = self.payment_service.get_transaction_detail(original_tx_no)
-                
-                if not original_tx:
-                    BaseUI.show_error("Original transaction does not exist")
-                    BaseUI.pause()
-                    return
-                
-                print(f"\nOriginal Transaction Information:")
-                print(f"Transaction No: {original_tx.tx_no}")
-                print(f"Type: {original_tx.get_tx_type_display()}")
-                print(f"Amount: {Formatter.format_currency(original_tx.final_amount)}")
-                print(f"Status: {original_tx.get_status_display()}")
-                print(f"Time: {original_tx.format_datetime('created_at')}")
-                
+                original_tx = self.payment_service.get_transaction_detail(tx_no)
             except Exception as e:
-                BaseUI.show_error(f"Failed to query original transaction: {e}")
+                print(f"\n❌ 查詢交易失敗: {e}")
+                print("\n💡 提示：")
+                print("   • 請確認交易號是否正確")
+                print("   • 只能查詢本商戶的交易")
                 BaseUI.pause()
                 return
             
-            # 輸入退款金額
-            max_refund = original_tx.final_amount or 0
-            refund_amount = QuickForm.get_amount("Please enter refund amount", 0.01, max_refund)
+            # Step 3: 顯示原交易信息
+            BaseUI.clear_screen()
+            print("╔═══════════════════════════════════════════════════════════════════════════╗")
+            print("║                        原交易信息                                         ║")
+            print("╠═══════════════════════════════════════════════════════════════════════════╣")
+            print(f"║  交易號：    {original_tx.tx_no:<60} ║")
+            print(f"║  交易類型：  {original_tx.get_tx_type_display():<60} ║")
+            print(f"║  交易金額：  {Formatter.format_currency(original_tx.final_amount):<60} ║")
+            print(f"║  交易狀態：  {original_tx.get_status_display():<60} ║")
+            print(f"║  交易時間：  {original_tx.format_datetime('created_at'):<60} ║")
             
-            # 驗證退款金額
-            validation = self.payment_service.validate_refund_amount(
-                original_tx_no, Decimal(str(refund_amount))
-            )
+            # 計算剩餘可退金額
+            refunded_amount = self._calculate_total_refunded(tx_no)
+            remaining_amount = Decimal(str(original_tx.final_amount)) - refunded_amount
             
-            if not validation["valid"]:
-                BaseUI.show_error(validation["error"])
+            print("╠═══════════════════════════════════════════════════════════════════════════╣")
+            print(f"║  已退金額：  {Formatter.format_currency(refunded_amount):<60} ║")
+            print(f"║  剩餘可退：  {Formatter.format_currency(remaining_amount):<60} ║")
+            print("╚═══════════════════════════════════════════════════════════════════════════╝")
+            
+            # 檢查是否可以退款
+            if original_tx.status not in ['completed', 'refunded']:
+                print("\n❌ 此交易不可退款")
+                print(f"   當前狀態：{original_tx.get_status_display()}")
+                print("   只有已完成的交易才能退款")
                 BaseUI.pause()
                 return
             
-            # 退款原因
-            reason = input("Enter refund reason (optional): ").strip()
-            
-            # 確認退款
-            print(f"\nRefund Information Confirmation:")
-            print(f"Original Transaction: {original_tx_no}")
-            print(f"Refund Amount: {Formatter.format_currency(refund_amount)}")
-            print(f"Refund Reason: {reason or 'None'}")
-            print(f"Remaining Refundable: {Formatter.format_currency(validation['remaining_amount'])}")
-            
-            if not QuickForm.get_confirmation("Confirm refund?"):
-                BaseUI.show_info("Refund cancelled")
+            if remaining_amount <= 0:
+                print("\n❌ 此交易已全額退款，無剩餘可退金額")
                 BaseUI.pause()
                 return
             
-            # 執行退款
-            BaseUI.show_loading("Processing refund...")
-            result = self.payment_service.refund_transaction(
+            # Step 4: 輸入退款金額
+            print(f"\n可退款金額：{Formatter.format_currency(remaining_amount)}")
+            
+            while True:
+                try:
+                    refund_amount_str = input(f"請輸入退款金額 (0.01-{remaining_amount}): ").strip()
+                    if not refund_amount_str:
+                        print("❌ 金額不能為空")
+                        continue
+                    
+                    refund_amount = Decimal(refund_amount_str)
+                    
+                    if refund_amount <= 0:
+                        print("❌ 退款金額必須大於 0")
+                        continue
+                    if refund_amount > remaining_amount:
+                        print(f"❌ 退款金額不能超過剩餘可退金額 {Formatter.format_currency(remaining_amount)}")
+                        continue
+                    
+                    break
+                except (ValueError, Exception):
+                    print("❌ 請輸入有效的金額")
+            
+            # Step 5: 輸入退款原因
+            print("\n退款原因（可選）：")
+            reason = input("請輸入退款原因: ").strip()
+            if not reason:
+                reason = "客戶要求退款"
+            
+            # Step 6: 確認退款
+            print("\n" + "═" * 79)
+            print("退款信息確認")
+            print("═" * 79)
+            print(f"原交易號：    {tx_no}")
+            print(f"原交易金額：  {Formatter.format_currency(original_tx.final_amount)}")
+            print(f"已退金額：    {Formatter.format_currency(refunded_amount)}")
+            print(f"本次退款：    {Formatter.format_currency(refund_amount)}")
+            print(f"退款後剩餘：  {Formatter.format_currency(remaining_amount - refund_amount)}")
+            print(f"退款原因：    {reason}")
+            print("═" * 79)
+            
+            if not BaseUI.confirm("\n確認退款？"):
+                print("❌ 已取消退款")
+                BaseUI.pause()
+                return
+            
+            # Step 7: 執行退款
+            BaseUI.show_loading("正在處理退款...")
+            
+            refund_result = self.payment_service.refund_transaction(
                 self.current_merchant_code,
-                original_tx_no,
-                Decimal(str(refund_amount)),
+                tx_no,
+                refund_amount,
                 reason
             )
             
+            # Step 8: 顯示退款結果
             BaseUI.clear_screen()
+            print("╔═══════════════════════════════════════════════════════════════════════════╗")
+            print("║                          退款成功！                                       ║")
+            print("╠═══════════════════════════════════════════════════════════════════════════╣")
+            print(f"║  退款交易號：{refund_result['refund_tx_no']:<60} ║")
+            print(f"║  原交易號：  {tx_no:<60} ║")
+            print(f"║  退款金額：  {Formatter.format_currency(refund_amount):<60} ║")
+            print(f"║  退款原因：  {reason[:50]:<60} ║")
+            print(f"║  處理時間：  {Formatter.format_datetime(refund_result.get('created_at')):<60} ║")
+            print("╚═══════════════════════════════════════════════════════════════════════════╝")
             
-            # 顯示退款結果
-            StatusDisplay.show_transaction_result(True, {
-                "Refund No": result["refund_tx_no"],
-                "Original Transaction": result["original_tx_no"],
-                "Refund Amount": Formatter.format_currency(result["refunded_amount"]),
-                "Processing Time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            })
+            print("\n✅ 退款已處理，金額將退回客戶卡片")
             
-            ui_logger.log_transaction("Refund", refund_amount, result["refund_tx_no"])
+            # 記錄日誌
+            ui_logger.log_transaction("Refund", refund_amount, refund_result['refund_tx_no'])
             
             BaseUI.pause()
             
         except Exception as e:
-            BaseUI.show_error(f"Refund failed: {e}")
+            BaseUI.show_error(f"退款失敗: {e}")
+            ui_logger.log_error("Process Refund", str(e))
+            
+            # 友好的錯誤提示
+            if "REFUND_EXCEEDS_REMAINING" in str(e):
+                print("\n💡 提示：退款金額超過剩餘可退金額")
+                print("   此交易可能已經部分退款")
+            elif "ONLY_COMPLETED_PAYMENT_REFUNDABLE" in str(e):
+                print("\n💡 提示：只能退款已完成的支付交易")
+            elif "NOT_AUTHORIZED" in str(e):
+                print("\n💡 提示：沒有權限操作此交易")
+                print("   只能退款本商戶的交易")
+            
             BaseUI.pause()
+    
+    def _calculate_total_refunded(self, original_tx_no: str) -> Decimal:
+        """計算已退款總金額"""
+        try:
+            # 查詢所有退款記錄
+            refunds = self.payment_service.get_refund_history(original_tx_no)
+            total = Decimal("0")
+            for refund in refunds:
+                if refund.get('status') == 'completed':
+                    total += Decimal(str(refund.get('amount', 0)))
+            return total
+        except:
+            return Decimal("0")
     
     def _view_today_transactions(self):
         """查看今日交易"""

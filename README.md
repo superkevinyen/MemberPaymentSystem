@@ -25,12 +25,13 @@ graph LR
 ### 💡 核心特性
 
 #### 🎫 多類型會員卡系統
-| 卡片類型 | 特性 | 共享 | 充值 | 積分 | 使用場景 |
-|---------|------|------|------|------|----------|
-| **標準卡** | 個人身份卡 | ❌ | ❌ | ✅ | 個人會員 |
-| **預付卡** | 儲值共享卡 | ✅ | ✅ | ✅ | 家庭卡、朋友共享 |
-| **企業卡** | 企業統一卡 | ✅ | ✅ | ❌ | 公司員工、團體 |
-| **優惠券卡** | 一次性優惠 | ❌ | ❌ | ❌ | 促銷活動 |
+| 卡片類型 | 特性 | 共享 | 充值 | 積分 | 折扣來源 | 使用場景 |
+|---------|------|------|------|------|---------|----------|
+| **標準卡** | 統一會員卡 | ❌ | ✅ | ✅ | 積分等級 OR 企業折扣（自動取最優） | 個人會員、企業員工 |
+| **企業卡** | 企業折扣卡 | ✅ | ❌ | ❌ | 固定折扣 | 提供員工折扣優惠 |
+| **優惠券卡** | 一次性優惠 | ❌ | ❌ | ❌ | 無 | 促銷活動 |
+
+> 💡 **2025-10-01 更新**: 系統已簡化為 3 種卡片類型，移除 Prepaid Card，所有功能合併到 Standard Card。詳見 [重構文檔](plans/REFACTOR_CARD_SYSTEM.md)
 
 #### 📱 QR 碼支付流程
 ```mermaid
@@ -110,23 +111,34 @@ def rpc(function_name: str, params: dict):
 
 #### 創建會員（自動生成標準卡）
 ```python
-# 創建新會員，自動綁定微信
+# 創建新會員，設置密碼並綁定微信
 member_id = rpc("create_member_profile", {
     "p_name": "張小明",
     "p_phone": "0988123456", 
     "p_email": "ming@example.com",
-    "p_binding_user_org": "wechat",
+    "p_password": "secure_password_123",  # 可選：設置登入密碼
+    "p_binding_user_org": "wechat",  # 可選：綁定外部身份
     "p_binding_org_id": "wx_openid_abc123"
 })
 print(f"會員 ID: {member_id}")
+
+# 會員登入（使用手機或會員號）
+login_result = rpc("member_login", {
+    "p_identifier": "0988123456",  # 或 member_no
+    "p_password": "secure_password_123"
+})
+print(f"Session ID: {login_result['session_id']}")
+print(f"過期時間: {login_result['expires_at']}")
 ```
 
 #### 生成付款 QR 碼
 ```python
 # 為會員卡生成 15 分鐘有效的 QR 碼
+# 注意：只有 Member 和 Super Admin 可以生成 QR，Merchant 不可以
 qr_result = rpc("rotate_card_qr", {
     "p_card_id": "<card-uuid>",
-    "p_ttl_seconds": 900  # 15 分鐘
+    "p_ttl_seconds": 900,  # 15 分鐘
+    "p_session_id": "<session-id>"  # 可選：自定義登入時需要
 })
 qr_plain = qr_result[0]["qr_plain"]
 expires_at = qr_result[0]["qr_expires_at"]
@@ -135,6 +147,13 @@ print(f"QR 碼: {qr_plain}, 過期時間: {expires_at}")
 
 #### 商戶掃碼收款
 ```python
+# 商戶登入
+merchant_login_result = rpc("merchant_login", {
+    "p_merchant_code": "SHOP001",
+    "p_password": "merchant_password"
+})
+session_id = merchant_login_result['session_id']
+
 # 商戶掃描 QR 碼進行收款
 try:
     payment_result = rpc("merchant_charge_by_qr", {
@@ -142,8 +161,9 @@ try:
         "p_qr_plain": qr_plain,
         "p_raw_amount": 299.00,
         "p_idempotency_key": "order-20250929-001",  # 防重複
-        "p_tag": {"scene": "miniapp", "campaign": "double11"},
-        "p_external_order_id": "WX20250929001"
+        "p_tag": {"scene": "pos_cli", "operator": "cashier01"},
+        "p_external_order_id": "POS20250929001",
+        "p_session_id": session_id  # 使用 session
     })
     
     print(f"交易成功!")
@@ -160,29 +180,38 @@ except Exception as e:
         print(f"支付失敗: {e}")
 ```
 
-#### 充值預付卡
+#### 充值標準卡
 ```python
-# 為預付卡充值
+# 為標準卡充值（只有 Standard Card 可以充值）
 recharge_result = rpc("user_recharge_card", {
-    "p_card_id": "<prepaid-card-uuid>",
+    "p_card_id": "<standard-card-uuid>",
     "p_amount": 500.00,
-    "p_payment_method": "wechat",
+    "p_payment_method": "wechat",  # 'wechat' | 'alipay' | 'cash' | 'balance'
     "p_idempotency_key": "topup-20250929-001",
-    "p_tag": {"channel": "app"}
+    "p_tag": {"channel": "app", "source": "member_app"},
+    "p_session_id": session_id  # 可選
 })
 print(f"充值成功，交易號: {recharge_result[0]['tx_no']}")
+
+# 注意：Corporate Card 和 Voucher Card 不可充值
 ```
 
 #### 商戶退款
 ```python
-# 部分退款
+# 部分退款（支持多次部分退款）
 refund_result = rpc("merchant_refund_tx", {
     "p_merchant_code": "SHOP001", 
     "p_original_tx_no": "PAY0000000123",
     "p_refund_amount": 50.00,
-    "p_tag": {"reason": "商品瑕疵"}
+    "p_tag": {"reason": "商品瑕疵", "operator": "manager01"},
+    "p_session_id": session_id  # 可選
 })
 print(f"退款成功，退款單號: {refund_result[0]['refund_tx_no']}")
+
+# 退款規則：
+# 1. 只能退款已完成的支付交易
+# 2. 支持多次部分退款
+# 3. 總退款金額不能超過原交易金額
 ```
 
 ---
@@ -249,60 +278,147 @@ erDiagram
 
 ### 🛡️ 多層安全防護
 
-#### 1. 身份認證分離
-- **平台管理員**: 使用 Supabase `auth.users`
-- **業務會員**: 使用 `member_profiles` + 外部身份綁定
-- **商戶用戶**: `merchant_users` 關聯 `auth.users`
+#### 1. 身份認證系統
 
-#### 2. 行級安全 (RLS)
+**三種登入方式並存**：
+
+##### A. Supabase Auth 登入（推薦用於 Web/App）
+- **超級管理員 (super_admin)**: 使用 Supabase Auth，關聯 `admin_users` 表
+- **會員 (member)**: 可選使用 Supabase Auth，通過 `member_profiles.auth_user_id` 關聯
+- **商戶 (merchant)**: 可選使用 Supabase Auth，通過 `merchant_users` 關聯
+
+##### B. 自定義密碼登入（用於 CLI/POS）
+- **會員登入**: `member_login(phone/member_no, password)` → 返回 session_id
+- **商戶登入**: `merchant_login(merchant_code, password)` → 返回 session_id
+- 密碼存儲在 `member_profiles.password_hash` 和 `merchants.password_hash`
+- Session 管理通過 `app_sessions` 表
+
+##### C. 外部身份綁定（用於小程序/第三方）
+- 微信、支付寶、Line 等第三方平台
+- 通過 `member_external_identities` 表綁定
+- 支持 `binding_user_org` 和 `binding_org_id`
+
+#### 2. 統一角色識別系統
+
+**`get_user_role()` 函數**：
+```sql
+-- 優先級順序檢查：
+1. Session 變數（自定義登入）: app.user_role
+2. Supabase Auth: auth.uid()
+   - 檢查 admin_users → 'super_admin'
+   - 檢查 merchant_users → 'merchant'
+   - 檢查 member_profiles → 'member'
+3. 返回 NULL（未登入）
+```
+
+#### 3. 行級安全 (RLS)
 ```sql
 -- 示例：會員只能查看自己的交易
-CREATE POLICY "Members can view own transactions" ON transactions
+CREATE POLICY "Users can view own transactions" ON transactions
 FOR SELECT USING (
-  card_id IN (
-    SELECT id FROM member_cards 
-    WHERE owner_member_id = get_current_member_id()
+  auth.uid() IS NOT NULL AND (
+    -- 自己卡片的交易
+    card_id IN (
+      SELECT mc.id FROM member_cards mc
+      JOIN member_profiles mp ON mp.id = mc.owner_member_id
+      WHERE mp.binding_user_org = 'supabase' 
+        AND mp.binding_org_id = auth.uid()::text
+    )
+    OR
+    -- 自己商戶的交易
+    merchant_id IN (
+      SELECT mu.merchant_id FROM merchant_users mu
+      WHERE mu.auth_user_id = auth.uid()
+    )
+  )
+);
+
+-- Super Admin 繞過所有限制
+CREATE POLICY "Super admins bypass all restrictions on transactions"
+ON transactions FOR ALL USING (
+  auth.uid() IS NOT NULL AND
+  EXISTS (
+    SELECT 1 FROM admin_users au
+    WHERE au.auth_user_id = auth.uid()
+      AND au.role = 'super_admin'
+      AND au.is_active = true
   )
 );
 ```
 
-#### 3. 函數級安全
+#### 4. 函數級安全與權限控制
+
+**權限檢查函數**：
+```sql
+-- check_permission(required_role) - 統一權限檢查
+-- Super Admin 擁有所有權限
+-- 其他角色只能執行自己角色的操作
+```
+
+**RPC 函數安全**：
 - 所有 RPC 函數使用 `SECURITY DEFINER`
 - 內部調用 `sec.fixed_search_path()` 防止路徑注入
 - 參數驗證和業務規則檢查
+- Session 支持：大部分 RPC 接受 `p_session_id` 參數
 
-#### 4. 併發安全
+#### 5. 併發安全
 ```sql
 -- 防止重複扣款的諮詢鎖
 PERFORM pg_advisory_xact_lock(sec.card_lock_key(card_id));
 ```
 
-#### 5. 密碼安全
-- 所有密碼使用 `bcrypt` 加密
+#### 6. 密碼安全
+- 所有密碼使用 `bcrypt` (pgcrypto) 加密
 - QR 碼明文不存儲，只存 hash
 - 支持密碼輪換
+- 最小密碼長度：6 字符
 
-### 🔑 權限角色建議
+#### 7. Session 管理
 
+**`app_sessions` 表**：
 ```sql
--- 創建角色並授權
-CREATE ROLE platform_admin;
-CREATE ROLE merchant_api; 
-CREATE ROLE member_app;
-
--- 平台管理員：全部權限
-GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA app TO platform_admin;
-
--- 商戶 API：支付相關
-GRANT EXECUTE ON FUNCTION app.merchant_charge_by_qr TO merchant_api;
-GRANT EXECUTE ON FUNCTION app.merchant_refund_tx TO merchant_api;
-GRANT EXECUTE ON FUNCTION app.get_merchant_transactions TO merchant_api;
-
--- 會員 App：個人操作
-GRANT EXECUTE ON FUNCTION app.rotate_card_qr TO member_app;
-GRANT EXECUTE ON FUNCTION app.user_recharge_card TO member_app;
-GRANT EXECUTE ON FUNCTION app.get_member_transactions TO member_app;
+- session_id: 唯一標識符（base64 編碼）
+- user_role: 'super_admin' | 'merchant' | 'member'
+- user_id: 用戶 UUID
+- merchant_id / member_id: 關聯 ID
+- expires_at: 過期時間（預設 24 小時）
+- last_accessed_at: 最後訪問時間
 ```
+
+**Session 函數**：
+- `load_session(session_id)` - 加載並驗證 session
+- `logout_session(session_id)` - 登出並刪除 session
+- `cleanup_expired_sessions()` - 清理過期 session
+
+### 🔑 角色權限矩陣
+
+| 功能 | super_admin | merchant | member | 說明 |
+|------|-------------|----------|--------|------|
+| **認證管理** |
+| 設置會員密碼 | ✅ | ❌ | ❌ | `set_member_password` |
+| 設置商戶密碼 | ✅ | ❌ | ❌ | `set_merchant_password` |
+| 會員登入 | - | - | ✅ | `member_login` |
+| 商戶登入 | - | ✅ | - | `merchant_login` |
+| **QR 碼管理** |
+| 生成 QR 碼 | ✅ | ❌ | ✅ | `rotate_card_qr` - 商戶不能生成 |
+| 撤銷 QR 碼 | ✅ | ❌ | ✅ | `revoke_card_qr` |
+| 驗證 QR 碼 | ✅ | ✅ | ✅ | `validate_qr_plain` |
+| **交易處理** |
+| 掃碼收款 | ✅ | ✅ | ❌ | `merchant_charge_by_qr` |
+| 退款處理 | ✅ | ✅ | ❌ | `merchant_refund_tx` |
+| 充值卡片 | ✅ | ❌ | ✅ | `user_recharge_card` |
+| **會員管理** |
+| 創建會員 | ✅ | ❌ | ❌ | `create_member_profile` |
+| 綁定卡片 | ✅ | ❌ | ✅ | `bind_member_to_card` |
+| 暫停會員 | ✅ | ❌ | ❌ | `admin_suspend_member` |
+| **卡片管理** |
+| 凍結卡片 | ✅ | ❌ | ❌ | `freeze_card` |
+| 調整積分 | ✅ | ❌ | ❌ | `update_points_and_level` |
+| 創建企業卡 | ✅ | ❌ | ❌ | `create_corporate_card` |
+| **查詢功能** |
+| 會員交易記錄 | ✅ | ❌ | ✅ | `get_member_transactions` |
+| 商戶交易記錄 | ✅ | ✅ | ❌ | `get_merchant_transactions` |
+| 結算查詢 | ✅ | ✅ | ❌ | `list_settlements` |
 
 ---
 

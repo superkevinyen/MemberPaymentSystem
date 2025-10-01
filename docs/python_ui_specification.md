@@ -6,29 +6,38 @@
 
 基於 [`rpc/mps_rpc.sql`](../rpc/mps_rpc.sql) 分析，我們有以下可用的 RPC 函數：
 
-#### A. 會員與綁定管理
+#### A. 認證與會員管理
+- `member_login()` - 會員登入（手機/會員號 + 密碼）
+- `merchant_login()` - 商戶登入（商戶代碼 + 密碼）
+- `logout_session()` - 登出（刪除 session）
+- `load_session()` - 加載 session（驗證有效性）
 - `create_member_profile()` - 創建會員（自動生成標準卡）
+- `set_member_password()` - 設置會員密碼
+- `set_merchant_password()` - 設置商戶密碼
 - `bind_member_to_card()` - 綁定會員到卡片
 - `unbind_member_from_card()` - 解綁會員卡片
 
 #### B. QR 碼管理
-- `rotate_card_qr()` - 生成/刷新 QR 碼
+- `rotate_card_qr()` - 生成/刷新 QR 碼（只有 Member/Admin 可用，Merchant 不可）
 - `validate_qr_plain()` - 驗證 QR 碼
 - `revoke_card_qr()` - 撤銷 QR 碼
-- `cron_rotate_qr_tokens()` - 批量輪換 QR 碼
+- `cron_rotate_qr_tokens()` - 批量輪換 QR 碼（只適用於 Corporate Card）
 
 #### C. 交易處理
-- `merchant_charge_by_qr()` - 商戶掃碼收款
-- `merchant_refund_tx()` - 商戶退款
-- `user_recharge_card()` - 用戶充值
+- `merchant_charge_by_qr()` - 商戶掃碼收款（支持 session）
+- `merchant_refund_tx()` - 商戶退款（支持多次部分退款）
+- `user_recharge_card()` - 用戶充值（只支持 Standard Card）
 
 #### D. 積分等級
 - `update_points_and_level()` - 手動調整積分
 
 #### E. 管理功能
 - `freeze_card()` / `unfreeze_card()` - 凍結/解凍卡片
-- `admin_suspend_member()` - 暫停會員
-- `admin_suspend_merchant()` - 暫停商戶
+- `admin_suspend_member()` / `admin_activate_member()` - 暫停/恢復會員
+- `admin_suspend_merchant()` / `admin_activate_merchant()` - 暫停/恢復商戶
+- `create_corporate_card()` - 創建企業折扣卡
+- `create_voucher_card()` - 創建優惠券卡
+- `set_card_binding_password()` - 設置卡片綁定密碼
 
 #### F. 查詢功能
 - `generate_settlement()` - 生成結算
@@ -46,29 +55,35 @@
 ```
 ┌─────────────────────────────────────┐
 │           MPS 會員系統              │
+│      會員：張小明 (M00000001)      │
 ├─────────────────────────────────────┤
 │ 1. 查看我的卡片                     │
 │ 2. 生成付款 QR 碼                   │
 │ 3. 充值卡片                         │
 │ 4. 查看交易記錄                     │
-│ 5. 綁定新卡片                       │
+│ 5. 綁定企業卡                       │
 │ 6. 查看積分等級                     │
-│ 7. 退出系統                         │
+│ 7. 修改密碼                         │
+│ 8. 登出系統                         │
 └─────────────────────────────────────┘
 ```
 
 **對應 RPC 功能**:
-- 查看卡片 → 查詢 `member_cards` 表
-- 生成 QR 碼 → `rotate_card_qr()`
-- 充值卡片 → `user_recharge_card()`
-- 交易記錄 → `get_member_transactions()`
-- 綁定卡片 → `bind_member_to_card()`
+- 登入 → `member_login(p_identifier, p_password)`
+- 查看卡片 → `get_member_cards(p_member_id)` 或查詢 `member_cards` 表
+- 生成 QR 碼 → `rotate_card_qr(p_card_id, p_ttl_seconds, p_session_id)`
+- 充值卡片 → `user_recharge_card(p_card_id, p_amount, ..., p_session_id)`
+- 交易記錄 → `get_member_transactions(p_member_id, ..., p_session_id)`
+- 綁定企業卡 → `bind_member_to_card(p_card_id, p_member_id, p_role, p_binding_password, p_session_id)`
+- 修改密碼 → `set_member_password(p_member_id, p_password)`
+- 登出 → `logout_session(p_session_id)`
 
 ### 🏪 角色 2: 商戶用戶 (Merchant POS)
 
 ```
 ┌─────────────────────────────────────┐
 │           MPS 商戶 POS              │
+│      商戶：星巴克 (SHOP001)       │
 ├─────────────────────────────────────┤
 │ 1. 掃碼收款                         │
 │ 2. 退款處理                         │
@@ -76,22 +91,27 @@
 │ 4. 查看交易記錄                     │
 │ 5. 生成結算報表                     │
 │ 6. 查看結算歷史                     │
-│ 7. 退出系統                         │
+│ 7. 修改密碼                         │
+│ 8. 登出系統                         │
 └─────────────────────────────────────┘
 ```
 
 **對應 RPC 功能**:
-- 掃碼收款 → `merchant_charge_by_qr()`
-- 退款處理 → `merchant_refund_tx()`
-- 交易記錄 → `get_merchant_transactions()`
-- 結算報表 → `generate_settlement()`
-- 結算歷史 → `list_settlements()`
+- 登入 → `merchant_login(p_merchant_code, p_password)`
+- 掃碼收款 → `merchant_charge_by_qr(p_merchant_code, p_qr_plain, p_raw_amount, ..., p_session_id)`
+- 退款處理 → `merchant_refund_tx(p_merchant_code, p_original_tx_no, p_refund_amount, ..., p_session_id)`
+- 交易記錄 → `get_merchant_transactions(p_merchant_id, ..., p_session_id)`
+- 結算報表 → `generate_settlement(p_merchant_id, p_mode, p_period_start, p_period_end)`
+- 結算歷史 → `list_settlements(p_merchant_id, ..., p_session_id)`
+- 修改密碼 → `set_merchant_password(p_merchant_id, p_password)` (需 Admin)
+- 登出 → `logout_session(p_session_id)`
 
 ### 👨‍💼 角色 3: 平台管理員 (Admin Console)
 
 ```
 ┌─────────────────────────────────────┐
 │          MPS 管理控制台             │
+│         角色：Super Admin          │
 ├─────────────────────────────────────┤
 │ 1. 會員管理                         │
 │ 2. 商戶管理                         │
@@ -99,14 +119,17 @@
 │ 4. 交易監控                         │
 │ 5. 系統維護                         │
 │ 6. 數據報表                         │
-│ 7. 退出系統                         │
+│ 7. 認證管理                         │
+│ 8. 登出系統                         │
 └─────────────────────────────────────┘
 ```
 
 **對應 RPC 功能**:
-- 會員管理 → `create_member_profile()`, `admin_suspend_member()`
-- 卡片管理 → `freeze_card()`, `unfreeze_card()`, `update_points_and_level()`
-- 系統維護 → `cron_rotate_qr_tokens()`
+- 會員管理 → `create_member_profile()`, `admin_suspend_member()`, `admin_activate_member()`
+- 商戶管理 → `create_merchant()`, `admin_suspend_merchant()`, `admin_activate_merchant()`
+- 卡片管理 → `freeze_card()`, `unfreeze_card()`, `update_points_and_level()`, `create_corporate_card()`, `create_voucher_card()`
+- 系統維護 → `cron_rotate_qr_tokens()`, `cleanup_expired_sessions()`
+- 認證管理 → `set_member_password()`, `set_merchant_password()`, `set_card_binding_password()`
 
 ---
 
@@ -190,15 +213,59 @@ def show_my_cards(member_id: str):
     print("└─────────────────────────────────────────────────────────┘")
 ```
 
-#### 2. 生成付款 QR 碼
+#### 2. 會員登入流程
 ```python
-def generate_payment_qr(card_id: str):
+def member_login():
+    """會員登入流程"""
+    print("┌─────────────────────────────────────┐")
+    print("│            會員系統登入             │")
+    print("└─────────────────────────────────────┘")
+    
+    # 輸入識別符（手機或會員號）
+    identifier = input("請輸入手機號碼或會員號: ")
+    password = getpass.getpass("請輸入密碼: ")
+    
+    try:
+        # 調用 member_login RPC
+        result = rpc("member_login", {
+            "p_identifier": identifier,
+            "p_password": password
+        })
+        
+        # 保存 session_id 用於後續調用
+        session_id = result["session_id"]
+        member_id = result["member_id"]
+        member_name = result["name"]
+        expires_at = result["expires_at"]
+        
+        print(f"✅ 登入成功！歡迎 {member_name}")
+        print(f"Session 有效期至: {expires_at}")
+        
+        return session_id, member_id
+        
+    except Exception as e:
+        if "MEMBER_NOT_FOUND" in str(e):
+            print("❌ 會員不存在")
+        elif "INVALID_PASSWORD" in str(e):
+            print("❌ 密碼錯誤")
+        elif "PASSWORD_NOT_SET" in str(e):
+            print("❌ 尚未設置密碼，請聯繫管理員")
+        else:
+            print(f"❌ 登入失敗: {e}")
+        return None, None
+```
+
+#### 3. 生成付款 QR 碼
+```python
+def generate_payment_qr(card_id: str, session_id: str):
     """生成付款 QR 碼"""
     try:
         # 調用 rotate_card_qr RPC
+        # 注意：只有 Member 和 Super Admin 可以生成 QR，Merchant 不可以
         result = rpc("rotate_card_qr", {
             "p_card_id": card_id,
-            "p_ttl_seconds": 900  # 15分鐘
+            "p_ttl_seconds": 900,  # 15分鐘
+            "p_session_id": session_id  # 使用 session 認證
         })
         
         qr_plain = result[0]["qr_plain"]
@@ -216,16 +283,22 @@ def generate_payment_qr(card_id: str):
         return qr_plain
         
     except Exception as e:
-        print(f"❌ QR 碼生成失敗: {e}")
+        if "PERMISSION_DENIED" in str(e):
+            print("❌ 沒有權限生成 QR 碼")
+        elif "CARD_NOT_FOUND" in str(e):
+            print("❌ 卡片不存在或未激活")
+        else:
+            print(f"❌ QR 碼生成失敗: {e}")
         return None
 ```
 
-#### 3. 卡片充值
+#### 4. 卡片充值（只支持 Standard Card）
 ```python
-def recharge_card(card_id: str):
-    """卡片充值"""
+def recharge_card(card_id: str, session_id: str):
+    """卡片充值（只支持 Standard Card）"""
     print("┌─────────────────────────────────────┐")
     print("│              卡片充值               │")
+    print("│     （只支持標準卡充值）            │")
     print("└─────────────────────────────────────┘")
     
     # 輸入充值金額
@@ -266,21 +339,69 @@ def recharge_card(card_id: str):
             "p_amount": amount,
             "p_payment_method": payment_method,
             "p_idempotency_key": idempotency_key,
-            "p_tag": {"source": "cli_app"}
+            "p_tag": {"source": "cli_app"},
+            "p_session_id": session_id  # 使用 session 認證
         })
         
         tx_no = result[0]["tx_no"]
         print(f"✅ 充值成功！交易號: {tx_no}")
         
     except Exception as e:
-        print(f"❌ 充值失敗: {e}")
+        if "UNSUPPORTED_CARD_TYPE_FOR_RECHARGE" in str(e):
+            print("❌ 此卡片類型不支持充值（只有標準卡可以充值）")
+        elif "CARD_NOT_FOUND_OR_INACTIVE" in str(e):
+            print("❌ 卡片不存在或未激活")
+        else:
+            print(f"❌ 充值失敗: {e}")
 ```
 
 ### 🏪 商戶功能模組
 
-#### 1. 掃碼收款
+#### 1. 商戶登入流程
 ```python
-def scan_and_charge():
+def merchant_login():
+    """商戶登入流程"""
+    print("┌─────────────────────────────────────┐")
+    print("│            商戶系統登入             │")
+    print("└─────────────────────────────────────┘")
+    
+    # 輸入商戶代碼和密碼
+    merchant_code = input("請輸入商戶代碼: ")
+    password = getpass.getpass("請輸入密碼: ")
+    
+    try:
+        # 調用 merchant_login RPC
+        result = rpc("merchant_login", {
+            "p_merchant_code": merchant_code,
+            "p_password": password
+        })
+        
+        # 保存 session_id 用於後續調用
+        session_id = result["session_id"]
+        merchant_id = result["merchant_id"]
+        merchant_name = result["merchant_name"]
+        expires_at = result["expires_at"]
+        
+        print(f"✅ 登入成功！商戶: {merchant_name}")
+        print(f"Session 有效期至: {expires_at}")
+        
+        return session_id, merchant_id, merchant_code
+        
+    except Exception as e:
+        if "MERCHANT_NOT_FOUND" in str(e):
+            print("❌ 商戶不存在")
+        elif "INVALID_PASSWORD" in str(e):
+            print("❌ 密碼錯誤")
+        elif "PASSWORD_NOT_SET" in str(e):
+            print("❌ 尚未設置密碼，請聯繫管理員")
+        else:
+            print(f"❌ 登入失敗: {e}")
+        return None, None, None
+```
+
+#### 2. 掃碼收款
+```python
+def scan_and_charge(merchant_code: str, session_id: str):
     """掃碼收款流程"""
     print("┌─────────────────────────────────────┐")
     print("│              掃碼收款               │")
@@ -316,12 +437,13 @@ def scan_and_charge():
     try:
         # 調用 merchant_charge_by_qr RPC
         result = rpc("merchant_charge_by_qr", {
-            "p_merchant_code": get_current_merchant_code(),
+            "p_merchant_code": merchant_code,
             "p_qr_plain": qr_plain,
             "p_raw_amount": amount,
             "p_idempotency_key": idempotency_key,
             "p_tag": {"source": "pos_cli"},
-            "p_external_order_id": f"CLI-{uuid.uuid4()}"
+            "p_external_order_id": f"CLI-{uuid.uuid4()}",
+            "p_session_id": session_id  # 使用 session 認證
         })
         
         tx_id = result[0]["tx_id"]
@@ -344,18 +466,23 @@ def scan_and_charge():
             print("❌ 客戶餘額不足，請提醒充值")
         elif "QR_EXPIRED_OR_INVALID" in error_msg:
             print("❌ QR 碼已過期，請客戶重新生成")
-        elif "NOT_MERCHANT_USER" in error_msg:
+        elif "NOT_AUTHORIZED_FOR_THIS_MERCHANT" in error_msg:
             print("❌ 您沒有此商戶的操作權限")
+        elif "CORPORATE_CARD_CANNOT_PAY" in error_msg:
+            print("❌ 企業折扣卡不能直接支付（請使用標準卡）")
+        elif "CARD_NOT_ACTIVE" in error_msg:
+            print("❌ 卡片未激活")
         else:
             print(f"❌ 收款失敗: {error_msg}")
 ```
 
-#### 2. 退款處理
+#### 3. 退款處理（支持多次部分退款）
 ```python
-def process_refund():
-    """退款處理流程"""
+def process_refund(merchant_code: str, session_id: str):
+    """退款處理流程（支持多次部分退款）"""
     print("┌─────────────────────────────────────┐")
     print("│              退款處理               │")
+    print("│      （支持多次部分退款）           │")
     print("└─────────────────────────────────────┘")
     
     # 輸入原交易號
@@ -408,10 +535,11 @@ def process_refund():
     try:
         # 調用 merchant_refund_tx RPC
         result = rpc("merchant_refund_tx", {
-            "p_merchant_code": get_current_merchant_code(),
+            "p_merchant_code": merchant_code,
             "p_original_tx_no": original_tx_no,
             "p_refund_amount": refund_amount,
-            "p_tag": {"reason": reason, "source": "pos_cli"}
+            "p_tag": {"reason": reason, "source": "pos_cli"},
+            "p_session_id": session_id  # 使用 session 認證
         })
         
         refund_tx_no = result[0]["refund_tx_no"]
@@ -427,9 +555,13 @@ def process_refund():
     except Exception as e:
         error_msg = str(e)
         if "REFUND_EXCEEDS_REMAINING" in error_msg:
-            print("❌ 退款金額超過可退金額")
+            print("❌ 退款金額超過剩餘可退金額")
         elif "ONLY_COMPLETED_PAYMENT_REFUNDABLE" in error_msg:
             print("❌ 只能退款已完成的支付交易")
+        elif "ORIGINAL_TX_NOT_FOUND" in error_msg:
+            print("❌ 原交易不存在")
+        elif "NOT_AUTHORIZED_FOR_THIS_MERCHANT" in error_msg:
+            print("❌ 您沒有此商戶的操作權限")
         else:
             print(f"❌ 退款失敗: {error_msg}")
 ```

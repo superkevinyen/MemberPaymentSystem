@@ -209,7 +209,7 @@ class Validator:
         if not card_type:
             return False
         
-        valid_types = ['standard', 'prepaid', 'corporate', 'voucher']
+        valid_types = ['standard', 'corporate', 'voucher']
         return card_type.lower() in valid_types
     
     @staticmethod

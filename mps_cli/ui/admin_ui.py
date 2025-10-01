@@ -634,7 +634,7 @@ class AdminUI:
             BaseUI.clear_screen()
             BaseUI.show_header("Batch Rotate QR Codes")
             
-            print("!  This operation will rotate QR codes for all active prepaid and corporate cards")
+            print("!  This operation will rotate QR codes for all active corporate cards")
             print("   After rotation, old QR codes will be immediately invalidated")
             
             # 輸入 TTL 秒數

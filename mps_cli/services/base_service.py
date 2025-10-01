@@ -16,13 +16,35 @@ class BaseService(ABC):
     def rpc_call(self, function_name: str, params: Dict[str, Any]) -> Any:
         """安全的 RPC 調用"""
         try:
+            # 如果有 session_id，自動添加到參數中
+            if (self.auth_service and
+                hasattr(self.auth_service, 'session_id') and
+                self.auth_service.session_id and
+                'p_session_id' not in params):
+                params['p_session_id'] = self.auth_service.session_id
+            
             self.logger.info(f"調用 RPC: {function_name}")
             self.logger.debug(f"RPC 參數: {params}")
+            
+            # 特別調試 get_user_profile
+            if function_name == "get_user_profile":
+                self.logger.debug(f"[DEBUG] 調用 get_user_profile，當前 auth.uid() 應該存在")
             
             result = self.client.rpc(function_name, params)
             
             self.logger.info(f"RPC 調用成功: {function_name}")
             self.logger.debug(f"RPC 結果: {result}")
+            
+            # 特別調試 get_user_profile 的返回值
+            if function_name == "get_user_profile":
+                if result is None:
+                    self.logger.error(f"[DEBUG] get_user_profile 返回 None！這不正常！")
+                    # 嘗試調用 get_user_role 看看
+                    try:
+                        role = self.client.rpc("get_user_role", {})
+                        self.logger.error(f"[DEBUG] get_user_role 返回: {role}")
+                    except Exception as role_e:
+                        self.logger.error(f"[DEBUG] get_user_role 也失敗: {role_e}")
             
             return result
             

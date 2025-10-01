@@ -120,126 +120,335 @@ class MemberUI:
             BaseUI.pause()
     
     def _generate_qr(self):
-        """生成付款 QR 碼"""
+        """生成付款 QR 碼 - 商業版"""
         try:
-            # 獲取可用卡片
-            cards = self.member_service.get_active_cards(self.current_member_id)
+            BaseUI.clear_screen()
+            print("╔═══════════════════════════════════════════════════════════════════════════╗")
+            print("║                          生成付款 QR 碼                                   ║")
+            print("╚═══════════════════════════════════════════════════════════════════════════╝")
             
-            if not cards:
-                BaseUI.show_error("No active cards available")
+            # Step 1: 獲取可用卡片（排除 Corporate Card）
+            BaseUI.show_loading("正在獲取卡片信息...")
+            all_cards = self.member_service.get_member_cards(self.current_member_id)
+            
+            # 過濾：只有 Standard 和 Voucher 可以生成 QR
+            available_cards = [
+                card for card in all_cards 
+                if card.card_type in ['standard', 'voucher'] and card.status == 'active'
+            ]
+            
+            if not available_cards:
+                BaseUI.clear_screen()
+                print("\n⚠️  沒有可用的卡片")
+                print("\n說明：")
+                print("  • 標準卡和代金券卡可以生成 QR 碼")
+                print("  • 企業折扣卡不能生成 QR 碼（只提供折扣）")
+                print("  • 卡片必須處於激活狀態")
                 BaseUI.pause()
                 return
             
+            # Step 2: 顯示卡片列表
             BaseUI.clear_screen()
-            BaseUI.show_header("Generate Payment QR Code")
+            print("╔═══════════════════════════════════════════════════════════════════════════╗")
+            print("║                          選擇卡片                                         ║")
+            print("╚═══════════════════════════════════════════════════════════════════════════╝")
+            print("\n可用卡片：")
+            print("─" * 79)
+            print(f"{'序號':<4} {'卡號':<18} {'類型':<12} {'餘額':<14} {'積分':<8} {'狀態':<8}")
+            print("─" * 79)
             
-            # 選擇卡片
-            print("Please select card to generate QR code:")
-            card_options = [card.display_info() for card in cards]
-            choice = SimpleMenu.show_options("Available Cards", card_options)
+            for i, card in enumerate(available_cards, 1):
+                print(f"{i:<4} {card.card_no:<18} {card.get_card_type_display():<12} "
+                      f"{Formatter.format_currency(card.balance):<14} "
+                      f"{card.points or 0:<8} {card.get_status_display():<8}")
             
-            selected_card = cards[choice - 1]
+            print("─" * 79)
             
-            # 生成 QR 碼
-            BaseUI.show_loading("Generating QR code...")
-            qr_result = self.qr_service.rotate_qr(selected_card.id)
+            # Step 3: 選擇卡片
+            while True:
+                try:
+                    choice = input(f"\n請選擇卡片 (1-{len(available_cards)}) 或 q 返回: ").strip()
+                    if choice.lower() == 'q':
+                        return
+                    
+                    choice_num = int(choice)
+                    if 1 <= choice_num <= len(available_cards):
+                        selected_card = available_cards[choice_num - 1]
+                        break
+                    print(f"❌ 請輸入 1-{len(available_cards)}")
+                except ValueError:
+                    print("❌ 請輸入有效的數字")
             
+            # Step 4: 確認生成
+            print(f"\n選中卡片：{selected_card.card_no} ({selected_card.get_card_type_display()})")
+            print(f"當前餘額：{Formatter.format_currency(selected_card.balance)}")
+            
+            if not BaseUI.confirm("\n確認生成 QR 碼？"):
+                print("❌ 已取消")
+                BaseUI.pause()
+                return
+            
+            # Step 5: 生成 QR 碼
+            BaseUI.show_loading("正在生成 QR 碼...")
+            qr_result = self.qr_service.rotate_qr(selected_card.id, ttl_seconds=900)
+            
+            # Step 6: 顯示 QR 碼
             BaseUI.clear_screen()
+            self._display_qr_code(qr_result, selected_card)
             
-            # 顯示卡片信息
-            StatusDisplay.show_card_info({
-                "card_no": selected_card.card_no,
-                "card_type": selected_card.get_card_type_display(),
-                "balance": selected_card.balance,
-                "points": selected_card.points,
-                "level": selected_card.level,
-                "status": selected_card.status
-            })
-            
-            print()
-            
-            # 顯示 QR 碼信息
-            StatusDisplay.show_qr_code(qr_result)
-            
+            # 記錄日誌
             ui_logger.log_user_action("Generate QR Code", {
                 "card_id": selected_card.id,
                 "card_no": selected_card.card_no
             })
             
-            BaseUI.pause()
+            # Step 7: 操作菜單
+            self._qr_action_menu(selected_card, qr_result)
             
         except Exception as e:
-            BaseUI.show_error(f"QR code generation failed: {e}")
+            BaseUI.show_error(f"生成 QR 碼失敗: {e}")
+            ui_logger.log_error("Generate QR Code", str(e))
+            
+            # 友好的錯誤提示
+            if "PERMISSION_DENIED" in str(e):
+                print("\n💡 提示：沒有權限生成 QR 碼")
+            elif "CARD_NOT_FOUND" in str(e):
+                print("\n💡 提示：卡片不存在或未激活")
+            elif "CARD_TYPE_NOT_SUPPORTED" in str(e):
+                print("\n💡 提示：此卡片類型不支持生成 QR 碼")
+            
             BaseUI.pause()
     
+    def _display_qr_code(self, qr_result: Dict, card: Card):
+        """顯示 QR 碼信息"""
+        qr_plain = qr_result.get('qr_plain')
+        expires_at = qr_result.get('expires_at')
+        
+        print("╔═══════════════════════════════════════════════════════════════════════════╗")
+        print("║                          付款 QR 碼                                       ║")
+        print("╠═══════════════════════════════════════════════════════════════════════════╣")
+        print(f"║  QR 碼:    {qr_plain:<60} ║")
+        print(f"║  卡號:     {card.card_no:<60} ║")
+        print(f"║  類型:     {card.get_card_type_display():<60} ║")
+        print(f"║  餘額:     {Formatter.format_currency(card.balance):<60} ║")
+        print("╠═══════════════════════════════════════════════════════════════════════════╣")
+        print(f"║  有效期至: {expires_at:<60} ║")
+        print(f"║  有效時長: 15 分鐘{'':>56} ║")
+        print("╠═══════════════════════════════════════════════════════════════════════════╣")
+        print("║  使用說明：                                                               ║")
+        print("║  1. 請向商戶出示此 QR 碼                                                  ║")
+        print("║  2. 商戶掃碼後輸入金額即可完成支付                                        ║")
+        print("║  3. QR 碼過期後需要重新生成                                               ║")
+        print("╚═══════════════════════════════════════════════════════════════════════════╝")
+    
+    def _qr_action_menu(self, card: Card, qr_result: Dict):
+        """QR 碼操作菜單"""
+        while True:
+            print("\n操作選項：")
+            print("  1. 刷新 QR 碼")
+            print("  2. 撤銷 QR 碼")
+            print("  3. 返回主菜單")
+            
+            choice = input("\n請選擇 (1-3): ").strip()
+            
+            if choice == '1':
+                # 刷新 QR 碼
+                if BaseUI.confirm("確認刷新 QR 碼？"):
+                    try:
+                        BaseUI.show_loading("正在刷新...")
+                        new_qr = self.qr_service.rotate_qr(card.id, ttl_seconds=900)
+                        BaseUI.clear_screen()
+                        self._display_qr_code(new_qr, card)
+                        BaseUI.show_success("✅ QR 碼已刷新")
+                        qr_result = new_qr  # 更新 QR 結果
+                    except Exception as e:
+                        BaseUI.show_error(f"刷新失敗: {e}")
+            
+            elif choice == '2':
+                # 撤銷 QR 碼
+                if BaseUI.confirm("確認撤銷 QR 碼？撤銷後此 QR 碼將立即失效。"):
+                    try:
+                        BaseUI.show_loading("正在撤銷...")
+                        self.qr_service.revoke_qr(card.id)
+                        BaseUI.show_success("✅ QR 碼已撤銷")
+                        BaseUI.pause()
+                        return
+                    except Exception as e:
+                        BaseUI.show_error(f"撤銷失敗: {e}")
+            
+            elif choice == '3':
+                return
+            
+            else:
+                print("❌ 請輸入 1-3")
+    
     def _recharge_card(self):
-        """充值卡片"""
+        """充值卡片 - 商業版（只支持 Standard Card）"""
         try:
-            # 獲取可充值卡片
-            cards = self.member_service.get_rechargeable_cards(self.current_member_id)
-            
-            if not cards:
-                BaseUI.show_error("No rechargeable cards available", "Only prepaid and corporate cards support recharge")
-                BaseUI.pause()
-                return
-            
             BaseUI.clear_screen()
-            BaseUI.show_header("Card Recharge")
+            print("╔═══════════════════════════════════════════════════════════════════════════╗")
+            print("║                          卡片充值                                         ║")
+            print("║                    （只支持標準卡充值）                                   ║")
+            print("╚═══════════════════════════════════════════════════════════════════════════╝")
             
-            # 選擇卡片
-            print("Please select card to recharge:")
-            card_options = [card.display_info() for card in cards]
-            choice = SimpleMenu.show_options("Rechargeable Cards", card_options)
+            # Step 1: 獲取可充值卡片（只有 Standard Card）
+            BaseUI.show_loading("正在獲取卡片信息...")
+            all_cards = self.member_service.get_member_cards(self.current_member_id)
             
-            selected_card = cards[choice - 1]
+            rechargeable_cards = [
+                card for card in all_cards 
+                if card.card_type == 'standard' and card.status == 'active'
+            ]
             
-            # 充值表單
-            print(f"\nSelected Card: {selected_card.display_info()}")
-            
-            # 獲取充值金額
-            amount = QuickForm.get_amount("Please enter recharge amount", 0.01, 50000)
-            
-            # 選擇支付方式
-            payment_methods = self.payment_service.get_payment_methods()
-            method_options = [method["name"] for method in payment_methods]
-            method_choice = SimpleMenu.show_options("Payment Method", method_options)
-            selected_method = payment_methods[method_choice - 1]["code"]
-            
-            # 確認充值
-            print(f"\nRecharge Information Confirmation:")
-            print(f"Card: {selected_card.card_no}")
-            print(f"Amount: {Formatter.format_currency(amount)}")
-            print(f"Payment Method: {payment_methods[method_choice - 1]['name']}")
-            
-            if not QuickForm.get_confirmation("Confirm recharge?"):
-                BaseUI.show_info("Recharge cancelled")
+            if not rechargeable_cards:
+                BaseUI.clear_screen()
+                print("\n⚠️  沒有可充值的卡片")
+                print("\n說明：")
+                print("  • 只有標準卡支持充值")
+                print("  • 企業折扣卡和代金券卡不可充值")
+                print("  • 卡片必須處於激活狀態")
                 BaseUI.pause()
                 return
             
-            # 執行充值
-            BaseUI.show_loading("Processing recharge...")
+            # Step 2: 顯示卡片列表
+            BaseUI.clear_screen()
+            print("╔═══════════════════════════════════════════════════════════════════════════╗")
+            print("║                          選擇卡片                                         ║")
+            print("╚═══════════════════════════════════════════════════════════════════════════╝")
+            print("\n可充值卡片：")
+            print("─" * 79)
+            print(f"{'序號':<4} {'卡號':<18} {'當前餘額':<14} {'積分':<8} {'等級':<12}")
+            print("─" * 79)
+            
+            for i, card in enumerate(rechargeable_cards, 1):
+                print(f"{i:<4} {card.card_no:<18} "
+                      f"{Formatter.format_currency(card.balance):<14} "
+                      f"{card.points or 0:<8} {card.get_level_display():<12}")
+            
+            print("─" * 79)
+            
+            # Step 3: 選擇卡片
+            while True:
+                try:
+                    choice = input(f"\n請選擇卡片 (1-{len(rechargeable_cards)}) 或 q 返回: ").strip()
+                    if choice.lower() == 'q':
+                        return
+                    
+                    choice_num = int(choice)
+                    if 1 <= choice_num <= len(rechargeable_cards):
+                        selected_card = rechargeable_cards[choice_num - 1]
+                        break
+                    print(f"❌ 請輸入 1-{len(rechargeable_cards)}")
+                except ValueError:
+                    print("❌ 請輸入有效的數字")
+            
+            # Step 4: 輸入充值金額
+            print(f"\n選中卡片：{selected_card.card_no}")
+            print(f"當前餘額：{Formatter.format_currency(selected_card.balance)}")
+            
+            while True:
+                try:
+                    amount_str = input("\n請輸入充值金額 (1-50000): ").strip()
+                    if not amount_str:
+                        print("❌ 金額不能為空")
+                        continue
+                    
+                    amount = Decimal(amount_str)
+                    
+                    if amount < Decimal("1"):
+                        print("❌ 充值金額不能小於 ¥1")
+                        continue
+                    if amount > Decimal("50000"):
+                        print("❌ 單次充值金額不能超過 ¥50,000")
+                        continue
+                    
+                    break
+                except (ValueError, Exception):
+                    print("❌ 請輸入有效的金額")
+            
+            # Step 5: 選擇支付方式
+            payment_methods = [
+                {"code": "wechat", "name": "微信支付", "icon": "💚"},
+                {"code": "alipay", "name": "支付寶", "icon": "💙"},
+                {"code": "bank", "name": "銀行卡", "icon": "💳"},
+                {"code": "cash", "name": "現金", "icon": "💵"}
+            ]
+            
+            print("\n支付方式：")
+            for i, method in enumerate(payment_methods, 1):
+                print(f"  {i}. {method['icon']} {method['name']}")
+            
+            while True:
+                try:
+                    method_choice = int(input(f"\n請選擇支付方式 (1-{len(payment_methods)}): "))
+                    if 1 <= method_choice <= len(payment_methods):
+                        selected_method = payment_methods[method_choice - 1]
+                        break
+                    print(f"❌ 請輸入 1-{len(payment_methods)}")
+                except ValueError:
+                    print("❌ 請輸入有效的數字")
+            
+            # Step 6: 確認充值
+            print("\n" + "═" * 79)
+            print("充值信息確認")
+            print("═" * 79)
+            print(f"卡號：        {selected_card.card_no}")
+            print(f"當前餘額：    {Formatter.format_currency(selected_card.balance)}")
+            print(f"充值金額：    {Formatter.format_currency(amount)}")
+            print(f"充值後餘額：  {Formatter.format_currency(selected_card.balance + amount)}")
+            print(f"支付方式：    {selected_method['icon']} {selected_method['name']}")
+            print("═" * 79)
+            
+            if not BaseUI.confirm("\n確認充值？"):
+                print("❌ 已取消充值")
+                BaseUI.pause()
+                return
+            
+            # Step 7: 執行充值
+            BaseUI.show_loading("正在處理充值...")
+            
+            import uuid
+            idempotency_key = f"recharge-{uuid.uuid4()}"
+            
             result = self.payment_service.recharge_card(
                 selected_card.id,
-                Decimal(str(amount)),
-                selected_method
+                amount,
+                selected_method['code'],
+                idempotency_key=idempotency_key
             )
             
+            # Step 8: 顯示充值結果
             BaseUI.clear_screen()
+            print("╔═══════════════════════════════════════════════════════════════════════════╗")
+            print("║                          充值成功！                                       ║")
+            print("╠═══════════════════════════════════════════════════════════════════════════╣")
+            print(f"║  交易號：  {result['tx_no']:<60} ║")
+            print(f"║  充值金額：{Formatter.format_currency(amount):<60} ║")
+            print(f"║  支付方式：{selected_method['name']:<60} ║")
+            print(f"║  處理時間：{Formatter.format_datetime(result.get('created_at')):<60} ║")
+            print("╚═══════════════════════════════════════════════════════════════════════════╝")
             
-            # 顯示充值結果
-            StatusDisplay.show_transaction_result(True, {
-                "Transaction No": result["tx_no"],
-                "Recharge Amount": Formatter.format_currency(result["amount"]),
-                "Payment Method": payment_methods[method_choice - 1]["name"],
-                "Processing Time": Formatter.format_datetime(result.get("created_at"))
-            })
+            print("\n✅ 充值已到賬，您可以開始使用了！")
             
-            ui_logger.log_transaction("Recharge", amount, result["tx_no"])
+            # 記錄日誌
+            ui_logger.log_transaction("Recharge", amount, result['tx_no'])
             
             BaseUI.pause()
             
         except Exception as e:
-            BaseUI.show_error(f"Recharge failed: {e}")
+            BaseUI.show_error(f"充值失敗: {e}")
+            ui_logger.log_error("Recharge Card", str(e))
+            
+            # 友好的錯誤提示
+            if "UNSUPPORTED_CARD_TYPE" in str(e):
+                print("\n💡 提示：此卡片類型不支持充值")
+                print("   只有標準卡可以充值")
+            elif "CARD_NOT_FOUND" in str(e):
+                print("\n💡 提示：卡片不存在或未激活")
+            elif "INVALID_AMOUNT" in str(e):
+                print("\n💡 提示：充值金額無效")
+                print("   請確保金額在 ¥1 - ¥50,000 之間")
+            
             BaseUI.pause()
     
     def _view_transactions(self):
@@ -292,59 +501,137 @@ class MemberUI:
             BaseUI.pause()
     
     def _bind_new_card(self):
-        """綁定新卡片"""
+        """綁定企業卡 - 商業版"""
         try:
             BaseUI.clear_screen()
-            BaseUI.show_header("Bind New Card")
+            print("╔═══════════════════════════════════════════════════════════════════════════╗")
+            print("║                        綁定企業折扣卡                                     ║")
+            print("╚═══════════════════════════════════════════════════════════════════════════╝")
             
-            # 輸入卡片 ID
-            card_id = QuickForm.get_text("Please enter Card ID", True, Validator.validate_card_id,
-                                       "Please enter valid UUID format Card ID")
+            print("\n企業折扣卡說明：")
+            print("  • 企業卡提供固定折扣，可與多人共享")
+            print("  • 綁定後，您的標準卡將繼承企業折扣")
+            print("  • 支付時自動選擇最優折扣（積分折扣 vs 企業折扣）")
+            print("  • 需要企業卡的綁定密碼才能綁定")
             
-            # 選擇綁定角色
-            roles = ["member", "viewer"]
-            role_names = ["Member (Can use card)", "Viewer (View info only)"]
-            role_choice = SimpleMenu.show_options("Binding Role", role_names)
-            selected_role = roles[role_choice - 1]
+            # Step 1: 輸入企業卡 ID
+            print("\n" + "─" * 79)
+            card_id = input("請輸入企業卡 ID: ").strip()
             
-            # 輸入綁定密碼（如果需要）
-            binding_password = input("Enter binding password (optional, if card has password): ").strip()
-            if not binding_password:
-                binding_password = None
-            
-            # 確認綁定
-            print(f"\nBinding Information Confirmation:")
-            print(f"Card ID: {card_id}")
-            print(f"Binding Role: {role_names[role_choice - 1]}")
-            print(f"Binding Password: {'Set' if binding_password else 'Not Set'}")
-            
-            if not QuickForm.get_confirmation("Confirm binding?"):
-                BaseUI.show_info("Binding cancelled")
+            if not card_id:
+                print("❌ 企業卡 ID 不能為空")
                 BaseUI.pause()
                 return
             
-            # 執行綁定
-            BaseUI.show_loading("Binding card...")
+            # 驗證 UUID 格式
+            try:
+                import uuid
+                uuid.UUID(card_id)
+            except ValueError:
+                print("❌ 企業卡 ID 格式不正確（應為 UUID 格式）")
+                BaseUI.pause()
+                return
+            
+            # Step 2: 選擇綁定角色
+            print("\n綁定角色：")
+            roles = [
+                {"code": "member", "name": "成員", "desc": "可以查看卡片信息，使用企業折扣"},
+                {"code": "viewer", "name": "查看者", "desc": "只能查看卡片信息，不能使用"}
+            ]
+            
+            for i, role in enumerate(roles, 1):
+                print(f"  {i}. {role['name']} - {role['desc']}")
+            
+            while True:
+                try:
+                    role_choice = int(input(f"\n請選擇角色 (1-{len(roles)}): "))
+                    if 1 <= role_choice <= len(roles):
+                        selected_role = roles[role_choice - 1]
+                        break
+                    print(f"❌ 請輸入 1-{len(roles)}")
+                except ValueError:
+                    print("❌ 請輸入有效的數字")
+            
+            # Step 3: 輸入綁定密碼
+            import getpass
+            binding_password = getpass.getpass("\n請輸入企業卡綁定密碼: ")
+            
+            if not binding_password:
+                print("❌ 綁定密碼不能為空")
+                BaseUI.pause()
+                return
+            
+            # Step 4: 確認綁定
+            print("\n" + "═" * 79)
+            print("綁定信息確認")
+            print("═" * 79)
+            print(f"企業卡 ID：  {card_id}")
+            print(f"綁定角色：   {selected_role['name']} ({selected_role['desc']})")
+            print(f"綁定密碼：   已設置")
+            print("═" * 79)
+            
+            if not BaseUI.confirm("\n確認綁定？"):
+                print("❌ 已取消綁定")
+                BaseUI.pause()
+                return
+            
+            # Step 5: 執行綁定
+            BaseUI.show_loading("正在綁定企業卡...")
+            
             result = self.member_service.bind_card(
                 card_id,
                 self.current_member_id,
-                selected_role,
+                selected_role['code'],
                 binding_password
             )
             
-            if result:
-                BaseUI.show_success("Card bound successfully!")
-                ui_logger.log_user_action("Bind Card", {
-                    "card_id": card_id,
-                    "role": selected_role
-                })
-            else:
-                BaseUI.show_error("Card binding failed")
+            # Step 6: 顯示綁定結果
+            BaseUI.clear_screen()
+            print("╔═══════════════════════════════════════════════════════════════════════════╗")
+            print("║                        企業卡綁定成功！                                   ║")
+            print("╠═══════════════════════════════════════════════════════════════════════════╣")
+            print(f"║  企業卡 ID：{card_id[:30]}...{'':>30} ║")
+            print(f"║  綁定角色：  {selected_role['name']:<60} ║")
+            
+            # 如果返回了企業折扣信息
+            if result and isinstance(result, dict):
+                corporate_discount = result.get('corporate_discount')
+                if corporate_discount:
+                    discount_percent = (1 - float(corporate_discount)) * 100
+                    print(f"║  企業折扣：  {discount_percent:.1f}% OFF{'':>50} ║")
+                    print("╠═══════════════════════════════════════════════════════════════════════════╣")
+                    print("║  您的標準卡已繼承企業折扣！                                              ║")
+                    print("║  支付時將自動選擇最優折扣                                                ║")
+            
+            print("╚═══════════════════════════════════════════════════════════════════════════╝")
+            
+            print("\n✅ 綁定成功！您現在可以享受企業折扣了")
+            
+            # 記錄日誌
+            ui_logger.log_user_action("Bind Card", {
+                "card_id": card_id,
+                "role": selected_role['code']
+            })
             
             BaseUI.pause()
             
         except Exception as e:
-            BaseUI.show_error(f"Binding failed: {e}")
+            BaseUI.show_error(f"綁定失敗: {e}")
+            ui_logger.log_error("Bind Card", str(e))
+            
+            # 友好的錯誤提示
+            if "INVALID_BINDING_PASSWORD" in str(e):
+                print("\n💡 提示：綁定密碼錯誤")
+                print("   請聯繫企業卡管理員獲取正確的綁定密碼")
+            elif "CARD_NOT_FOUND" in str(e):
+                print("\n💡 提示：企業卡不存在或未激活")
+                print("   請確認企業卡 ID 是否正確")
+            elif "CARD_TYPE_NOT_SHAREABLE" in str(e):
+                print("\n💡 提示：此卡片類型不支持共享")
+                print("   只有企業折扣卡可以綁定")
+            elif "ALREADY_BOUND" in str(e):
+                print("\n💡 提示：您已經綁定過此企業卡")
+            
             BaseUI.pause()
     
     def _view_points_level(self):
@@ -377,7 +664,7 @@ class MemberUI:
                     print(f"  {key}: {value}")
                 
                 # 顯示升級信息
-                if card.card_type in ['standard', 'prepaid']:
+                if card.card_type == 'standard':
                     self._show_upgrade_info(card.points or 0)
             
             BaseUI.pause()

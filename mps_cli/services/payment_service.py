@@ -237,9 +237,7 @@ class PaymentService(BaseService):
                     discount_rate = 0.90
                 elif points >= 1000:
                     discount_rate = 0.95
-            elif card.get("card_type") == "prepaid":
-                # 預付卡使用固定折扣或積分折扣
-                discount_rate = card.get("fixed_discount") or card.get("discount_rate", 1.0)
+            # Standard Card 已移除 prepaid，不需要此邏輯
             elif card.get("card_type") == "corporate":
                 # 企業卡使用固定折扣
                 discount_rate = card.get("fixed_discount", 1.0)

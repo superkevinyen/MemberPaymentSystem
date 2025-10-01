@@ -12,12 +12,20 @@ class AuthService(BaseService):
         self.current_user = None
         self.current_role = None
         self.auth_type = None  # 'supabase_auth' or 'custom'
+        self.session_id = None  # 新增：存儲 session ID
     
     def login_with_email(self, email: str, password: str) -> Dict[str, Any]:
         """Email 登入（管理員/商戶）"""
         self.log_operation("Email login", {"email": email})
         
         try:
+            # 0. 清除可能殘留的 session 變數
+            try:
+                self.rpc_call("reset_session_variables", {})
+                self.logger.debug("Cleared residual session variables before login")
+            except Exception as e:
+                self.logger.warning(f"Failed to clear session variables: {e}")
+            
             # 1. Supabase Auth 登入
             auth_response = self.client.sign_in_with_password(email, password)
             
@@ -28,9 +36,10 @@ class AuthService(BaseService):
                 self.client.sign_out()
                 raise Exception("USER_NOT_AUTHORIZED")
             
-            # 3. 只允許 admin 和 merchant
+            # 3. 只允許 super_admin 和 merchant
             role = profile.get("role")
-            if role not in ["admin", "super_admin", "merchant"]:
+            
+            if role not in ["super_admin", "merchant"]:
                 self.client.sign_out()
                 raise Exception("INVALID_LOGIN_METHOD")
             
@@ -64,9 +73,11 @@ class AuthService(BaseService):
             if not result:
                 raise Exception("LOGIN_FAILED")
             
+            # 存儲 session 信息
             self.current_user = result
             self.current_role = "member"
             self.auth_type = "custom"
+            self.session_id = result.get('session_id')  # 新增
             
             self.logger.info(f"Member login successful: {identifier}")
             
@@ -74,7 +85,8 @@ class AuthService(BaseService):
                 "success": True,
                 "role": "member",
                 "profile": result,
-                "auth_type": "custom"
+                "auth_type": "custom",
+                "session_id": self.session_id
             }
             
         except Exception as e:
@@ -94,9 +106,11 @@ class AuthService(BaseService):
             if not result:
                 raise Exception("LOGIN_FAILED")
             
+            # 存儲 session 信息
             self.current_user = result
             self.current_role = "merchant"
             self.auth_type = "custom"
+            self.session_id = result.get('session_id')  # 新增
             
             self.logger.info(f"Merchant login successful: {merchant_code}")
             
@@ -104,7 +118,8 @@ class AuthService(BaseService):
                 "success": True,
                 "role": "merchant",
                 "profile": result,
-                "auth_type": "custom"
+                "auth_type": "custom",
+                "session_id": self.session_id
             }
             
         except Exception as e:
@@ -114,24 +129,43 @@ class AuthService(BaseService):
     def logout(self):
         """登出"""
         try:
+            # 清除 PostgreSQL session 變數（防止連接池重用時的污染）
+            try:
+                self.rpc_call("reset_session_variables", {})
+                self.logger.debug("Session variables cleared")
+            except Exception as e:
+                self.logger.warning(f"Failed to clear session variables: {e}")
+            
+            # 如果是 Supabase Auth，登出
             if self.auth_type == "supabase_auth":
                 self.client.sign_out()
             
-            self.logger.info(f"Logout successful: role {self.current_role}")
-            
+            # 清除狀態
             self.current_user = None
             self.current_role = None
             self.auth_type = None
+            self.session_id = None
             
+            # 清除保存的憑證
+            if hasattr(self, '_admin_email'):
+                delattr(self, '_admin_email')
+            if hasattr(self, '_admin_password'):
+                delattr(self, '_admin_password')
+            
+            self.logger.info("Logout successful")
         except Exception as e:
             self.logger.error(f"Logout failed: {e}")
+    
+    def ensure_clean_state(self):
+        """確保認證狀態是乾淨的"""
+        self.logout()
+        self.client.ensure_clean_session()
     
     def get_current_user(self) -> Optional[Dict]:
         """取得當前用戶"""
         return self.current_user
     
     def get_current_role(self) -> Optional[str]:
-        """取得當前角色"""
         return self.current_role
     
     def check_permission(self, required_role: str) -> bool:
@@ -141,7 +175,6 @@ class AuthService(BaseService):
         
         role_hierarchy = {
             "super_admin": 4,
-            "admin": 3,
             "merchant": 2,
             "member": 1
         }
