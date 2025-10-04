@@ -3,6 +3,7 @@ from services.merchant_service import MerchantService
 from services.payment_service import PaymentService
 from services.qr_service import QRService
 from services.auth_service import AuthService
+from services.settlement_service import SettlementService
 from ui.components.menu import Menu, SimpleMenu
 from ui.components.table import Table, PaginatedTable
 from ui.components.form import QuickForm
@@ -21,12 +22,14 @@ class MerchantUI:
         self.merchant_service = MerchantService()
         self.payment_service = PaymentService()
         self.qr_service = QRService()
+        self.settlement_service = SettlementService()
         self.auth_service = auth_service
         
         # 設定 auth_service
         self.merchant_service.set_auth_service(auth_service)
         self.payment_service.set_auth_service(auth_service)
         self.qr_service.set_auth_service(auth_service)
+        self.settlement_service.set_auth_service(auth_service)
         
         # 從 auth_service 取得資訊
         profile = auth_service.get_current_user()
@@ -53,12 +56,14 @@ class MerchantUI:
     def _show_main_menu(self):
         """顯示主菜單"""
         options = [
-            "Scan & Charge",
-            "Process Refund",
-            "View Today's Transactions",
-            "View Transaction History",
-            "View Merchant Info",
-            "Exit System"
+            "掃碼收款",
+            "退款處理",
+            "今日交易統計",
+            "查看交易記錄",
+            "生成結算報表",
+            "查看結算歷史",
+            "商戶信息",
+            "退出系統"
         ]
         
         handlers = [
@@ -66,6 +71,8 @@ class MerchantUI:
             self._process_refund,
             self._view_today_transactions,
             self._view_transaction_history,
+            self._generate_settlement,
+            self._view_settlement_history,
             self._view_merchant_info,
             lambda: False  # 退出
         ]
@@ -490,3 +497,297 @@ class MerchantUI:
         
         table = Table(headers, data, "Detailed Transaction Records")
         table.display()
+    
+    def _generate_settlement(self):
+        """生成結算報表 - 商業版"""
+        try:
+            BaseUI.clear_screen()
+            print("╔═══════════════════════════════════════════════════════════════════════════╗")
+            print("║                        生成結算報表                                       ║")
+            print("╚═══════════════════════════════════════════════════════════════════════════╝")
+            
+            # Step 1: 選擇結算模式
+            print("\n結算模式：")
+            modes = [
+                {"code": "realtime", "name": "實時結算", "desc": "即時到賬"},
+                {"code": "t_plus_1", "name": "T+1結算", "desc": "次日到賬"},
+                {"code": "monthly", "name": "月結", "desc": "每月結算"}
+            ]
+            
+            for i, mode in enumerate(modes, 1):
+                print(f"  {i}. {mode['name']} - {mode['desc']}")
+            
+            while True:
+                try:
+                    mode_choice = int(input(f"\n請選擇結算模式 (1-{len(modes)}): "))
+                    if 1 <= mode_choice <= len(modes):
+                        selected_mode = modes[mode_choice - 1]
+                        break
+                    print(f"❌ 請輸入 1-{len(modes)}")
+                except ValueError:
+                    print("❌ 請輸入有效的數字")
+            
+            # Step 2: 選擇結算期間
+            print(f"\n結算期間（{selected_mode['name']}）：")
+            
+            if selected_mode['code'] == 'realtime':
+                period_start, period_end = self._select_date_range()
+            elif selected_mode['code'] == 't_plus_1':
+                period_start, period_end = self._select_single_date()
+            else:  # monthly
+                period_start, period_end = self._select_month()
+            
+            # Step 3: 確認生成
+            print("\n" + "═" * 79)
+            print("結算信息確認")
+            print("═" * 79)
+            print(f"商戶：        {self.current_merchant_name}")
+            print(f"結算模式：    {selected_mode['name']}")
+            print(f"結算期間：    {period_start} ~ {period_end}")
+            print("═" * 79)
+            
+            if not BaseUI.confirm("\n確認生成結算報表？"):
+                print("❌ 已取消")
+                BaseUI.pause()
+                return
+            
+            # Step 4: 生成結算
+            BaseUI.show_loading("正在生成結算報表...")
+            
+            result = self.settlement_service.generate_settlement(
+                self.current_merchant_id,
+                selected_mode['code'],
+                period_start,
+                period_end
+            )
+            
+            # Step 5: 顯示結算結果
+            BaseUI.clear_screen()
+            self._display_settlement_result(result, selected_mode)
+            
+            BaseUI.pause()
+            
+        except Exception as e:
+            BaseUI.show_error(f"生成結算失敗: {e}")
+            ui_logger.log_error("Generate Settlement", str(e))
+            
+            # 友好的錯誤提示
+            if "NO_TRANSACTIONS_IN_PERIOD" in str(e):
+                print("\n💡 提示：所選期間內沒有交易記錄")
+                print("   請選擇其他時間範圍")
+            elif "SETTLEMENT_ALREADY_EXISTS" in str(e):
+                print("\n💡 提示：該期間的結算已存在")
+                print("   請查看結算歷史")
+            
+            BaseUI.pause()
+    
+    def _select_date_range(self):
+        """選擇日期範圍"""
+        from datetime import timedelta
+        
+        print("\n請選擇日期範圍：")
+        print("  1. 今日")
+        print("  2. 昨日")
+        print("  3. 最近7天")
+        print("  4. 最近30天")
+        print("  5. 自定義範圍")
+        
+        choice = int(input("\n請選擇 (1-5): "))
+        
+        today = datetime.now().date()
+        
+        if choice == 1:
+            period_start = today.isoformat()
+            period_end = today.isoformat()
+        elif choice == 2:
+            yesterday = today - timedelta(days=1)
+            period_start = yesterday.isoformat()
+            period_end = yesterday.isoformat()
+        elif choice == 3:
+            start = today - timedelta(days=7)
+            period_start = start.isoformat()
+            period_end = today.isoformat()
+        elif choice == 4:
+            start = today - timedelta(days=30)
+            period_start = start.isoformat()
+            period_end = today.isoformat()
+        else:
+            period_start = input("開始日期 (YYYY-MM-DD): ").strip()
+            period_end = input("結束日期 (YYYY-MM-DD): ").strip()
+        
+        return period_start, period_end
+    
+    def _select_single_date(self):
+        """選擇單個日期（T+1結算）"""
+        from datetime import timedelta
+        
+        print("\n請選擇結算日期：")
+        print("  1. 昨日")
+        print("  2. 前日")
+        print("  3. 自定義日期")
+        
+        choice = int(input("\n請選擇 (1-3): "))
+        
+        today = datetime.now().date()
+        
+        if choice == 1:
+            date = today - timedelta(days=1)
+        elif choice == 2:
+            date = today - timedelta(days=2)
+        else:
+            date_str = input("日期 (YYYY-MM-DD): ").strip()
+            date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        
+        return date.isoformat(), date.isoformat()
+    
+    def _select_month(self):
+        """選擇月份（月結）"""
+        from calendar import monthrange
+        
+        print("\n請選擇結算月份：")
+        print("  1. 上個月")
+        print("  2. 自定義月份")
+        
+        choice = int(input("\n請選擇 (1-2): "))
+        
+        today = datetime.now()
+        
+        if choice == 1:
+            if today.month == 1:
+                year = today.year - 1
+                month = 12
+            else:
+                year = today.year
+                month = today.month - 1
+        else:
+            year = int(input("年份 (YYYY): "))
+            month = int(input("月份 (1-12): "))
+        
+        first_day = datetime(year, month, 1).date()
+        last_day_num = monthrange(year, month)[1]
+        last_day = datetime(year, month, last_day_num).date()
+        
+        return first_day.isoformat(), last_day.isoformat()
+    
+    def _display_settlement_result(self, result: Dict, mode: Dict):
+        """顯示結算結果"""
+        print("╔═══════════════════════════════════════════════════════════════════════════╗")
+        print("║                        結算報表生成成功！                                 ║")
+        print("╠═══════════════════════════════════════════════════════════════════════════╣")
+        print(f"║  結算單號：  {result.get('settlement_no'):<60} ║")
+        print(f"║  結算模式：  {mode['name']:<60} ║")
+        print(f"║  結算期間：  {result.get('period_start')} ~ {result.get('period_end'):<30} ║")
+        print("╠═══════════════════════════════════════════════════════════════════════════╣")
+        print("║  交易統計：                                                               ║")
+        print(f"║  • 總交易數：{result.get('total_transactions', 0):<60} ║")
+        print(f"║  • 支付筆數：{result.get('payment_count', 0):<60} ║")
+        print(f"║  • 退款筆數：{result.get('refund_count', 0):<60} ║")
+        print("╠═══════════════════════════════════════════════════════════════════════════╣")
+        print("║  金額統計：                                                               ║")
+        print(f"║  • 支付金額：{Formatter.format_currency(result.get('payment_amount', 0)):<60} ║")
+        print(f"║  • 退款金額：{Formatter.format_currency(result.get('refund_amount', 0)):<60} ║")
+        print(f"║  • 淨收入：  {Formatter.format_currency(result.get('net_amount', 0)):<60} ║")
+        print(f"║  • 手續費：  {Formatter.format_currency(result.get('fee_amount', 0)):<60} ║")
+        print(f"║  • 結算金額：{Formatter.format_currency(result.get('settlement_amount', 0)):<60} ║")
+        print("╚═══════════════════════════════════════════════════════════════════════════╝")
+        
+        print(f"\n✅ 結算報表已生成，預計 {mode['desc']}")
+    
+    def _view_settlement_history(self):
+        """查看結算歷史 - 商業版"""
+        try:
+            BaseUI.clear_screen()
+            print("╔═══════════════════════════════════════════════════════════════════════════╗")
+            print("║                        結算歷史                                           ║")
+            print("╚═══════════════════════════════════════════════════════════════════════════╝")
+            
+            # 獲取結算列表
+            BaseUI.show_loading("正在獲取結算記錄...")
+            
+            result = self.settlement_service.list_settlements(
+                self.current_merchant_id,
+                limit=50,
+                offset=0
+            )
+            
+            settlements = result.get('data', [])
+            
+            if not settlements:
+                BaseUI.clear_screen()
+                print("\n⚠️  暫無結算記錄")
+                BaseUI.pause()
+                return
+            
+            # 顯示結算列表
+            BaseUI.clear_screen()
+            print("╔═══════════════════════════════════════════════════════════════════════════╗")
+            print("║                        結算歷史記錄                                       ║")
+            print("╚═══════════════════════════════════════════════════════════════════════════╝")
+            print("\n結算記錄：")
+            print("─" * 79)
+            print(f"{'序號':<4} {'結算單號':<20} {'模式':<12} {'期間':<20} {'淨額':<15} {'狀態':<8}")
+            print("─" * 79)
+            
+            for i, settlement in enumerate(settlements, 1):
+                period = f"{settlement.period_start[:10]}~{settlement.period_end[:10]}"
+                print(f"{i:<4} {settlement.settlement_no:<20} "
+                      f"{settlement.get_mode_display():<12} "
+                      f"{period:<20} "
+                      f"{Formatter.format_currency(settlement.net_amount):<15} "
+                      f"{settlement.get_status_display():<8}")
+            
+            print("─" * 79)
+            
+            # 操作選項
+            print("\n操作選項：")
+            print("  輸入序號查看詳情")
+            print("  輸入 q 返回")
+            
+            choice = input("\n請選擇: ").strip()
+            
+            if choice.lower() == 'q':
+                return
+            
+            try:
+                index = int(choice)
+                if 1 <= index <= len(settlements):
+                    selected = settlements[index - 1]
+                    self._show_settlement_detail(selected)
+            except ValueError:
+                print("❌ 無效的輸入")
+                BaseUI.pause()
+            
+        except Exception as e:
+            BaseUI.show_error(f"查詢結算歷史失敗: {e}")
+            ui_logger.log_error("View Settlement History", str(e))
+            BaseUI.pause()
+    
+    def _show_settlement_detail(self, settlement):
+        """顯示結算詳情"""
+        BaseUI.clear_screen()
+        print("╔═══════════════════════════════════════════════════════════════════════════╗")
+        print("║                        結算詳情                                           ║")
+        print("╠═══════════════════════════════════════════════════════════════════════════╣")
+        print(f"║  結算單號：  {settlement.settlement_no:<60} ║")
+        print(f"║  結算模式：  {settlement.get_mode_display():<60} ║")
+        print(f"║  結算期間：  {settlement.period_start} ~ {settlement.period_end:<30} ║")
+        print(f"║  結算狀態：  {settlement.get_status_display():<60} ║")
+        print("╠═══════════════════════════════════════════════════════════════════════════╣")
+        print("║  交易統計：                                                               ║")
+        print(f"║  • 總交易數：{settlement.total_transactions or 0:<60} ║")
+        print(f"║  • 支付筆數：{settlement.payment_count or 0:<60} ║")
+        print(f"║  • 退款筆數：{settlement.refund_count or 0:<60} ║")
+        print("╠═══════════════════════════════════════════════════════════════════════════╣")
+        print("║  金額統計：                                                               ║")
+        print(f"║  • 支付金額：{Formatter.format_currency(settlement.payment_amount or 0):<60} ║")
+        print(f"║  • 退款金額：{Formatter.format_currency(settlement.refund_amount or 0):<60} ║")
+        print(f"║  • 淨收入：  {Formatter.format_currency(settlement.net_amount or 0):<60} ║")
+        print(f"║  • 手續費：  {Formatter.format_currency(settlement.fee_amount or 0):<60} ║")
+        print(f"║  • 結算金額：{Formatter.format_currency(settlement.settlement_amount or 0):<60} ║")
+        print("╠═══════════════════════════════════════════════════════════════════════════╣")
+        print(f"║  創建時間：  {settlement.created_at:<60} ║")
+        if settlement.settled_at:
+            print(f"║  結算時間：  {settlement.settled_at:<60} ║")
+        print("╚═══════════════════════════════════════════════════════════════════════════╝")
+        
+        BaseUI.pause()

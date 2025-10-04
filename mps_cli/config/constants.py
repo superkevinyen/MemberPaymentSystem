@@ -64,6 +64,13 @@ SETTLEMENT_MODES = {
     'monthly': '月結算'
 }
 
+# 結算狀態
+SETTLEMENT_STATUS = {
+    'pending': '待結算',
+    'completed': '已完成',
+    'failed': '失敗'
+}
+
 # 錯誤碼對應的中文提示
 ERROR_MESSAGES = {
     "INSUFFICIENT_BALANCE": "餘額不足，請充值後再試",
