@@ -3,6 +3,7 @@ from .base_service import BaseService, QueryService
 from models.member import Member
 from models.card import Card, CardBinding
 from models.transaction import Transaction
+from utils.identifier_resolver import IdentifierResolver
 
 class MemberService(QueryService):
     """會員服務"""
@@ -248,14 +249,23 @@ class MemberService(QueryService):
     def search_members(self, keyword: str, limit: int = 50) -> List[Member]:
         """搜索會員"""
         try:
-            # 使用基類的搜索方法
-            search_fields = ["name", "phone", "email", "member_no"]
-            members_data = self.search_records("member_profiles", search_fields, keyword, limit)
+            self.log_operation("搜索會員", {
+                "keyword": keyword,
+                "limit": limit
+            })
             
-            members = [Member.from_dict(member_data) for member_data in members_data]
+            # 直接調用 RPC 函數
+            result = self.rpc_call("search_members", {
+                "p_keyword": keyword,
+                "p_limit": limit
+            })
             
-            self.logger.debug(f"搜索會員成功: 關鍵字 '{keyword}', 返回 {len(members)} 個結果")
-            return members
+            if result:
+                members = [Member.from_dict(member_data) for member_data in result]
+                self.logger.debug(f"搜索會員成功: 關鍵字 '{keyword}', 返回 {len(members)} 個結果")
+                return members
+            else:
+                return []
             
         except Exception as e:
             self.logger.error(f"搜索會員失敗: 關鍵字 '{keyword}', 錯誤: {e}")
@@ -547,4 +557,174 @@ class MemberService(QueryService):
                 "name": name,
                 "phone": phone,
                 "email": email
+            })
+    
+    # ========== 新增：支持業務識別碼的方法 ==========
+    
+    def get_member_by_identifier(self, identifier: str) -> Optional[Member]:
+        """通過任意識別碼獲取會員
+        
+        支持的識別碼類型：
+        - 會員號 (member_no)
+        - 手機號 (phone)
+        - 郵箱 (email)
+        - UUID (id) - 向後兼容
+        
+        Args:
+            identifier: 識別碼字符串
+        
+        Returns:
+            Member 對象或 None
+        """
+        try:
+            # 判斷識別碼類型
+            id_type = IdentifierResolver.get_identifier_type(identifier)
+            
+            self.log_operation("通過識別碼獲取會員", {
+                "identifier": identifier,
+                "type": id_type
+            })
+            
+            # 如果是 UUID，使用原有方法
+            if id_type == 'uuid':
+                return self.get_member_by_id(identifier)
+            
+            # 使用新的 RPC 函數
+            result = self.rpc_call("get_member_by_identifier", {
+                "p_identifier": identifier
+            })
+            
+            if result:
+                return Member.from_dict(result)
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"通過識別碼獲取會員失敗: {identifier}, 錯誤: {e}")
+            # 不拋出異常，返回 None
+            return None
+    
+    def update_member_by_identifier(self, identifier: str, name: str = None,
+                                   phone: str = None, email: str = None) -> bool:
+        """通過識別碼更新會員資料
+        
+        Args:
+            identifier: 會員號、手機號、郵箱或 UUID
+            name: 新姓名
+            phone: 新手機號
+            email: 新郵箱
+        
+        Returns:
+            bool: 是否更新成功
+        """
+        try:
+            id_type = IdentifierResolver.get_identifier_type(identifier)
+            
+            self.log_operation("通過識別碼更新會員", {
+                "identifier": identifier,
+                "type": id_type
+            })
+            
+            # 如果是 UUID，先轉換為會員號
+            if id_type == 'uuid':
+                member = self.get_member_by_id(identifier)
+                if member and member.member_no:
+                    identifier = member.member_no
+                else:
+                    raise Exception("無法找到會員")
+            
+            # 使用新的 RPC 函數
+            result = self.rpc_call("update_member_by_identifier", {
+                "p_identifier": identifier,
+                "p_name": name,
+                "p_phone": phone,
+                "p_email": email
+            })
+            
+            return bool(result)
+            
+        except Exception as e:
+            self.logger.error(f"通過識別碼更新會員失敗: {identifier}, 錯誤: {e}")
+            raise self.handle_service_error("更新會員資料", e, {
+                "identifier": identifier
+            })
+    
+    def set_member_password_by_identifier(self, identifier: str, new_password: str) -> bool:
+        """通過識別碼設置會員密碼
+        
+        Args:
+            identifier: 會員號、手機號、郵箱或 UUID
+            new_password: 新密碼
+        
+        Returns:
+            bool: 是否設置成功
+        """
+        try:
+            id_type = IdentifierResolver.get_identifier_type(identifier)
+            
+            self.log_operation("通過識別碼設置密碼", {
+                "identifier": identifier,
+                "type": id_type
+            })
+            
+            # 如果是 UUID，先轉換為會員號
+            if id_type == 'uuid':
+                member = self.get_member_by_id(identifier)
+                if member and member.member_no:
+                    identifier = member.member_no
+                else:
+                    raise Exception("無法找到會員")
+            
+            # 使用新的 RPC 函數
+            result = self.rpc_call("set_member_password_by_identifier", {
+                "p_identifier": identifier,
+                "p_new_password": new_password
+            })
+            
+            return bool(result)
+            
+        except Exception as e:
+            self.logger.error(f"通過識別碼設置密碼失敗: {identifier}, 錯誤: {e}")
+            raise self.handle_service_error("設置會員密碼", e, {
+                "identifier": identifier
+            })
+    
+    def toggle_member_status_by_identifier(self, identifier: str, new_status: str) -> bool:
+        """通過識別碼切換會員狀態
+        
+        Args:
+            identifier: 會員號、手機號、郵箱或 UUID
+            new_status: 新狀態 (active, inactive, suspended)
+        
+        Returns:
+            bool: 是否切換成功
+        """
+        try:
+            id_type = IdentifierResolver.get_identifier_type(identifier)
+            
+            self.log_operation("通過識別碼切換狀態", {
+                "identifier": identifier,
+                "type": id_type,
+                "new_status": new_status
+            })
+            
+            # 如果是 UUID，先轉換為會員號
+            if id_type == 'uuid':
+                member = self.get_member_by_id(identifier)
+                if member and member.member_no:
+                    identifier = member.member_no
+                else:
+                    raise Exception("無法找到會員")
+            
+            # 使用新的 RPC 函數
+            result = self.rpc_call("toggle_member_status_by_identifier", {
+                "p_identifier": identifier,
+                "p_new_status": new_status
+            })
+            
+            return bool(result)
+            
+        except Exception as e:
+            self.logger.error(f"通過識別碼切換狀態失敗: {identifier}, 錯誤: {e}")
+            raise self.handle_service_error("切換會員狀態", e, {
+                "identifier": identifier
             })

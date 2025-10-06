@@ -57,6 +57,7 @@ class MemberUI:
             "View Transaction History",
             "Bind New Card",
             "View Points & Level",
+            "Change Password",
             "Exit System"
         ]
         
@@ -67,6 +68,7 @@ class MemberUI:
             self._view_transactions,
             self._bind_new_card,
             self._view_points_level,
+            self._change_password,
             lambda: False  # 退出
         ]
         
@@ -703,6 +705,89 @@ class MemberUI:
             print(f"    Discount After Upgrade: {Formatter.format_discount(next_info['discount'])}")
         else:
             print(f"  🎉 You have reached the highest level!")
+    
+    def _change_password(self):
+        """修改密碼"""
+        try:
+            BaseUI.clear_screen()
+            BaseUI.show_header("Change Password")
+            
+            import getpass
+            
+            # 輸入舊密碼
+            print("請輸入您的密碼信息：")
+            old_password = getpass.getpass("\n當前密碼: ")
+            if not old_password:
+                BaseUI.show_error("密碼不能為空")
+                BaseUI.pause()
+                return
+            
+            # 輸入新密碼
+            new_password = getpass.getpass("新密碼: ")
+            if not new_password:
+                BaseUI.show_error("密碼不能為空")
+                BaseUI.pause()
+                return
+            
+            # 密碼強度檢查
+            if len(new_password) < 6:
+                BaseUI.show_error("密碼長度至少 6 個字符")
+                BaseUI.pause()
+                return
+            
+            # 確認新密碼
+            confirm_password = getpass.getpass("確認新密碼: ")
+            if new_password != confirm_password:
+                BaseUI.show_error("兩次密碼輸入不一致")
+                BaseUI.pause()
+                return
+            
+            # 確認修改
+            print("\n" + "═" * 79)
+            print("密碼修改確認")
+            print("═" * 79)
+            print("✓ 新密碼已設置")
+            print("⚠️  修改後請使用新密碼登入")
+            print("═" * 79)
+            
+            if not BaseUI.confirm("\n確認修改密碼？"):
+                BaseUI.show_info("已取消")
+                BaseUI.pause()
+                return
+            
+            # 執行修改
+            BaseUI.show_loading("正在修改密碼...")
+            
+            # 先驗證舊密碼（通過重新登入）
+            try:
+                member = self.member_service.get_member_by_id(self.current_member_id)
+                test_result = self.auth_service.login_with_phone(member.phone, old_password)
+                if not test_result or not test_result.get('success'):
+                    raise Exception("密碼驗證失敗")
+            except Exception:
+                BaseUI.show_error("當前密碼錯誤")
+                BaseUI.pause()
+                return
+            
+            # 設置新密碼
+            self.member_service.set_member_password(
+                self.current_member_id,
+                new_password
+            )
+            
+            BaseUI.show_success("密碼修改成功！", {
+                "提示": "下次登入請使用新密碼"
+            })
+            
+            ui_logger.log_user_action("Change Password", {
+                "member_id": self.current_member_id
+            })
+            
+            BaseUI.pause()
+            
+        except Exception as e:
+            BaseUI.show_error(f"密碼修改失敗：{e}")
+            BaseUI.pause()
     
     def _select_card(self, cards: List[Card], title: str = "Select Card") -> Optional[Card]:
         """選擇卡片的通用方法"""

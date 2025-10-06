@@ -66,40 +66,31 @@ class AdminUI:
         menu.run()
     
     def _member_management(self):
-        """會員管理"""
+        """會員管理 - 改進版（零 UUID 暴露）"""
         while True:
             BaseUI.clear_screen()
             BaseUI.show_header("Member Management")
             
             options = [
-                "Create New Member",
-                "View Member Info",
-                "Browse All Members",
-                "Advanced Search Members",
-                "Update Member Profile",
-                "Suspend Member",
-                "Return to Main Menu"
+                "🔍 Search & Manage Members (搜尋並管理會員)",
+                "📋 Browse All Members (瀏覽所有會員)",
+                "➕ Create New Member (創建新會員)",
+                "🔙 Return to Main Menu (返回主菜單)"
             ]
             
             choice = BaseUI.show_menu(options, "Member Management Operations")
             
             if choice == 1:
-                self._create_new_member()
+                self._search_and_manage_members()
             elif choice == 2:
-                self._view_member_info()
+                self._browse_all_members_improved()
             elif choice == 3:
-                self._browse_all_members()
+                self._create_new_member()
             elif choice == 4:
-                self._search_members_advanced()
-            elif choice == 5:
-                self._update_member_profile()
-            elif choice == 6:
-                self._suspend_member()
-            elif choice == 7:
                 break
     
     def _create_new_member(self):
-        """創建新會員"""
+        """創建新會員 - 改進版（支持密碼設置）"""
         try:
             BaseUI.clear_screen()
             BaseUI.show_header("Create New Member")
@@ -107,30 +98,80 @@ class AdminUI:
             # 使用驗證表單收集會員信息
             member_data = ValidationForm.create_member_form()
             
+            # 密碼設置選項
+            print("\n" + "═" * 79)
+            print("🔒 密碼設置選項")
+            print("═" * 79)
+            print("1. 使用手機號碼作為預設密碼 (推薦)")
+            print("2. 自定義密碼")
+            print("3. 暫不設置密碼 (會員首次登入時需設置)")
+            
+            password_choice = input("\n請選擇 (1-3): ").strip()
+            
+            password = None
+            password_display = "未設置"
+            
+            if password_choice == "1":
+                password = member_data['phone']
+                password_display = "使用手機號作為預設密碼"
+                print(f"✓ 將使用手機號作為預設密碼")
+            elif password_choice == "2":
+                import getpass
+                while True:
+                    password = getpass.getpass("\n請輸入密碼: ")
+                    if not password:
+                        BaseUI.show_error("密碼不能為空")
+                        continue
+                    
+                    if len(password) < 6:
+                        BaseUI.show_error("密碼長度至少 6 個字符")
+                        continue
+                    
+                    password_confirm = getpass.getpass("請確認密碼: ")
+                    
+                    if password != password_confirm:
+                        BaseUI.show_error("兩次密碼輸入不一致，請重新輸入")
+                        continue
+                    
+                    password_display = "已設置自定義密碼"
+                    print("✓ 密碼設置成功")
+                    break
+            elif password_choice == "3":
+                password = None
+                password_display = "未設置（首次登入需設置）"
+                print("⚠️  會員首次登入時需要設置密碼")
+            else:
+                BaseUI.show_error("無效的選擇，將不設置密碼")
+                password = None
+                password_display = "未設置"
+            
             # 確認創建
-            print(f"\nMember Information Confirmation:")
-            print(f"Name: {member_data['name']}")
-            print(f"Phone: {member_data['phone']}")
-            print(f"Email: {member_data['email']}")
+            print("\n" + "═" * 79)
+            print("Member Information Confirmation")
+            print("═" * 79)
+            print(f"Name:     {member_data['name']}")
+            print(f"Phone:    {member_data['phone']}")
+            print(f"Email:    {member_data['email']}")
+            print(f"Password: {password_display}")
             
             if member_data.get('bind_external'):
                 print(f"External Platform: {member_data['provider']}")
                 print(f"External ID: {member_data['external_id']}")
+            print("═" * 79)
             
-            if not QuickForm.get_confirmation("Confirm member creation?"):
+            if not QuickForm.get_confirmation("\nConfirm member creation?"):
                 BaseUI.show_info("Member creation cancelled")
                 BaseUI.pause()
                 return
             
-            # 執行創建
+            # 執行創建（帶密碼）
             BaseUI.show_loading("Creating member...")
             
-            member_id = self.admin_service.create_member_profile(
-                member_data['name'],
-                member_data['phone'],
-                member_data['email'],
-                member_data.get('provider'),
-                member_data.get('external_id')
+            member_id = self.member_service.create_member(
+                name=member_data['name'],
+                phone=member_data['phone'],
+                email=member_data['email'],
+                password=password
             )
             
             BaseUI.clear_screen()
@@ -138,12 +179,14 @@ class AdminUI:
                 "Member ID": member_id,
                 "Name": member_data['name'],
                 "Phone": member_data['phone'],
+                "Password": password_display,
                 "Auto Generated": "Standard card auto-generated and bound"
             })
             
             ui_logger.log_user_action("Create Member", {
                 "member_id": member_id,
-                "name": member_data['name']
+                "name": member_data['name'],
+                "password_set": password is not None
             })
             
             BaseUI.pause()
@@ -450,6 +493,149 @@ class AdminUI:
             BaseUI.show_error(f"Update failed: {e}")
             BaseUI.pause()
     
+    def _reset_member_password(self):
+        """重置會員密碼"""
+        try:
+            BaseUI.clear_screen()
+            BaseUI.show_header("Reset Member Password")
+            
+            # 選擇查找方式
+            print("請選擇會員：")
+            print("1. 輸入會員 ID")
+            print("2. 搜尋會員")
+            
+            choice = input("\n您的選擇 (1-2): ").strip()
+            
+            member_id = None
+            if choice == "1":
+                member_id = QuickForm.get_text(
+                    "請輸入會員 ID",
+                    required=True,
+                    validator=Validator.validate_member_id
+                )
+            elif choice == "2":
+                keyword = input("請輸入姓名或手機號: ").strip()
+                if not keyword:
+                    BaseUI.show_error("搜尋關鍵字不能為空")
+                    BaseUI.pause()
+                    return
+                
+                members = self.member_service.search_members(keyword)
+                
+                if not members:
+                    BaseUI.show_error("未找到會員")
+                    BaseUI.pause()
+                    return
+                
+                # 顯示搜尋結果
+                print(f"\n找到 {len(members)} 個會員：")
+                for i, member in enumerate(members, 1):
+                    print(f"{i}. {member.name} - {member.phone} ({member.member_no})")
+                
+                if len(members) == 1:
+                    member_id = members[0].id
+                else:
+                    idx = QuickForm.get_number("請選擇會員", 1, len(members))
+                    member_id = members[idx - 1].id
+            else:
+                BaseUI.show_error("無效的選擇")
+                BaseUI.pause()
+                return
+            
+            # 獲取會員信息
+            member = self.member_service.get_member_by_id(member_id)
+            if not member:
+                BaseUI.show_error("會員不存在")
+                BaseUI.pause()
+                return
+            
+            # 顯示會員信息
+            print("\n" + "═" * 79)
+            print("會員信息")
+            print("═" * 79)
+            print(f"姓名：  {member.name}")
+            print(f"手機：  {member.phone}")
+            print(f"郵箱：  {member.email}")
+            print(f"狀態：  {member.get_status_display()}")
+            print("═" * 79)
+            
+            # 密碼重置選項
+            print("\n🔒 密碼重置選項：")
+            print("1. 重置為手機號")
+            print("2. 設置自定義密碼")
+            print("3. 取消")
+            
+            reset_choice = input("\n請選擇 (1-3): ").strip()
+            
+            new_password = None
+            password_display = ""
+            
+            if reset_choice == "1":
+                new_password = member.phone
+                password_display = f"手機號：{member.phone}"
+                print(f"✓ 將重置為手機號：{member.phone}")
+            elif reset_choice == "2":
+                import getpass
+                while True:
+                    new_password = getpass.getpass("\n請輸入新密碼: ")
+                    if not new_password:
+                        BaseUI.show_error("密碼不能為空")
+                        continue
+                    
+                    if len(new_password) < 6:
+                        BaseUI.show_error("密碼長度至少 6 個字符")
+                        continue
+                    
+                    confirm_password = getpass.getpass("請確認新密碼: ")
+                    
+                    if new_password != confirm_password:
+                        BaseUI.show_error("兩次密碼輸入不一致，請重新輸入")
+                        continue
+                    
+                    password_display = "自定義密碼"
+                    print("✓ 密碼設置成功")
+                    break
+            elif reset_choice == "3":
+                BaseUI.show_info("已取消")
+                BaseUI.pause()
+                return
+            else:
+                BaseUI.show_error("無效的選擇")
+                BaseUI.pause()
+                return
+            
+            # 確認重置
+            print("\n" + "═" * 79)
+            print(f"確認重置 {member.name} 的密碼")
+            print(f"新密碼：{password_display}")
+            print("═" * 79)
+            
+            if not BaseUI.confirm_action("\n確認重置密碼？"):
+                BaseUI.show_info("已取消")
+                BaseUI.pause()
+                return
+            
+            # 執行重置
+            BaseUI.show_loading("正在重置密碼...")
+            self.member_service.set_member_password(member_id, new_password)
+            
+            BaseUI.show_success("密碼重置成功！", {
+                "會員": member.name,
+                "新密碼": password_display,
+                "提示": "請通知會員使用新密碼登入"
+            })
+            
+            ui_logger.log_user_action("Reset Member Password", {
+                "member_id": member_id,
+                "member_name": member.name
+            })
+            
+            BaseUI.pause()
+            
+        except Exception as e:
+            BaseUI.show_error(f"密碼重置失敗：{e}")
+            BaseUI.pause()
+    
     def _view_member_details(self, member_id: str):
         """查看會員詳情"""
         try:
@@ -549,36 +735,27 @@ class AdminUI:
         BaseUI.pause()
     
     def _card_management(self):
-        """卡片管理"""
+        """卡片管理 - 改進版（零 UUID 暴露）"""
         while True:
             BaseUI.clear_screen()
             BaseUI.show_header("Card Management")
             
             options = [
-                "Browse All Cards",
-                "Advanced Search Cards",
-                "Freeze Card",
-                "Unfreeze Card",
-                "Adjust Points",
-                "Search Cards",
-                "Return to Main Menu"
+                "🔍 Search & Manage Cards (搜尋並管理卡片)",
+                "📋 Browse All Cards (瀏覽所有卡片)",
+                "➕ Create Corporate Card (創建企業卡)",
+                "🔙 Return to Main Menu (返回主菜單)"
             ]
             
             choice = BaseUI.show_menu(options, "Card Management Operations")
             
             if choice == 1:
-                self._browse_all_cards()
+                self._search_and_manage_cards()
             elif choice == 2:
-                self._search_cards_advanced()
+                self._browse_all_cards_improved()
             elif choice == 3:
-                self._freeze_card()
+                self._create_corporate_card()
             elif choice == 4:
-                self._unfreeze_card()
-            elif choice == 5:
-                self._adjust_points()
-            elif choice == 6:
-                self._search_cards()
-            elif choice == 7:
                 break
     
     def _freeze_card(self):
@@ -1373,4 +1550,1601 @@ class AdminUI:
             
         except Exception as e:
             BaseUI.show_error(f"Batch rotation failed: {e}")
+            BaseUI.pause()
+    
+    # ========== 新增：搜尋並管理功能（零 UUID 暴露）==========
+    
+    def _search_and_manage_members(self):
+        """搜尋並管理會員 - 統一入口（零 UUID 暴露）"""
+        while True:
+            BaseUI.clear_screen()
+            BaseUI.show_header("搜尋並管理會員")
+            
+            # 顯示搜尋提示
+            print("\n💡 您可以輸入：")
+            print("  • 會員號（如：M202501001）")
+            print("  • 姓名（如：張三）")
+            print("  • 手機號（如：138）- 支持部分匹配")
+            print("  • 郵箱（如：user@example.com）")
+            
+            keyword = input("\n請輸入搜尋關鍵字（或按 Enter 返回）: ").strip()
+            
+            if not keyword:
+                return
+            
+            # 執行搜尋
+            BaseUI.show_loading("搜尋中...")
+            
+            try:
+                members = self.member_service.search_members(keyword, 50)
+                
+                if not members:
+                    BaseUI.show_info("未找到匹配的會員")
+                    BaseUI.pause()
+                    continue
+                
+                # 顯示搜尋結果並選擇
+                selected_member = self._display_and_select_member(members, keyword)
+                
+                if selected_member:
+                    # 進入會員操作菜單
+                    self._member_action_menu(selected_member)
+                
+            except Exception as e:
+                BaseUI.show_error(f"搜尋失敗：{e}")
+                BaseUI.pause()
+    
+    def _display_and_select_member(self, members: List, keyword: str) -> Optional:
+        """顯示搜尋結果並選擇會員（零 UUID 暴露）"""
+        while True:
+            BaseUI.clear_screen()
+            
+            # 顯示搜尋結果
+            print(f"🔍 搜尋結果（關鍵字：{keyword}，找到 {len(members)} 個會員）：")
+            print("─" * 79)
+            print(f"{'序號':<4} {'會員號':<12} {'姓名':<10} {'手機':<13} "
+                  f"{'郵箱':<20} {'狀態':<8}")
+            print("─" * 79)
+            
+            for i, member in enumerate(members, 1):
+                print(f"{i:<4} {member.member_no:<12} {member.name:<10} "
+                      f"{member.phone:<13} {member.email:<20} "
+                      f"{member.get_status_display():<8}")
+            
+            print("─" * 79)
+            
+            # 操作選項
+            print("\n操作選項：")
+            print(f"  [1-{len(members)}] 選擇會員進行操作")
+            print("  [R] 重新搜尋")
+            print("  [Q] 返回")
+            
+            choice = input("\n請選擇: ").strip().upper()
+            
+            if choice == 'R':
+                return None  # 重新搜尋
+            elif choice == 'Q':
+                return None  # 返回
+            elif choice.isdigit():
+                idx = int(choice)
+                if 1 <= idx <= len(members):
+                    return members[idx - 1]
+                else:
+                    BaseUI.show_error(f"請輸入 1-{len(members)}")
+                    BaseUI.pause()
+            else:
+                BaseUI.show_error("無效的選擇")
+                BaseUI.pause()
+    
+    def _member_action_menu(self, member):
+        """會員操作菜單（零 UUID 暴露）"""
+        while True:
+            BaseUI.clear_screen()
+            
+            # 顯示會員信息（不包含 UUID）
+            print("═" * 79)
+            print(f"會員操作 - {member.name}")
+            print("═" * 79)
+            print(f"會員號：  {member.member_no}")
+            print(f"姓名：    {member.name}")
+            print(f"手機：    {member.phone}")
+            print(f"郵箱：    {member.email}")
+            print(f"狀態：    {member.get_status_display()}")
+            print(f"創建時間：{member.format_datetime('created_at')}")
+            print("═" * 79)
+            
+            # 顯示會員的卡片信息
+            try:
+                cards = self.member_service.get_member_cards(member.id)
+                if cards:
+                    print("\n💳 會員卡片：")
+                    print("─" * 79)
+                    for i, card in enumerate(cards, 1):
+                        card_info = f"{i}. {card.card_no} ({card.get_card_type_display()}) - "
+                        card_info += f"餘額: {Formatter.format_currency(card.balance)} - "
+                        card_info += f"狀態: {card.get_status_display()}"
+                        print(card_info)
+                    print("─" * 79)
+                else:
+                    print("\n💳 會員卡片：暫無卡片")
+                    print("─" * 79)
+            except Exception as e:
+                print(f"\n💳 會員卡片：無法載入 ({e})")
+                print("─" * 79)
+            
+            # 操作選項
+            options = [
+                "📋 查看完整詳情 (View Full Details)",
+                "✏️  編輯資料 (Edit Profile)",
+                "🔒 重置密碼 (Reset Password)",
+                "💳 管理卡片 (Manage Cards)",
+                "💰 卡片充值 (Recharge Card)",
+                "💸 申請退款 (Request Refund)",
+                "📊 查看交易記錄 (View Transactions)",
+                "⏸️  暫停/激活 (Suspend/Activate)",
+                "🔙 返回搜尋 (Back to Search)"
+            ]
+            
+            choice = BaseUI.show_menu(options, "請選擇操作")
+            
+            if choice == 1:
+                self._view_member_full_details_improved(member)
+            elif choice == 2:
+                self._edit_member_profile_improved(member)
+            elif choice == 3:
+                self._reset_member_password_improved(member)
+            elif choice == 4:
+                self._manage_member_cards_improved(member)
+            elif choice == 5:
+                self._recharge_card_for_member(member)
+            elif choice == 6:
+                self._request_refund_for_member(member)
+            elif choice == 7:
+                self._view_member_transactions_improved(member)
+            elif choice == 8:
+                self._toggle_member_status_improved(member)
+            elif choice == 9:
+                break
+    
+    def _view_member_full_details_improved(self, member):
+        """查看會員完整詳情（零 UUID 暴露）"""
+        try:
+            BaseUI.clear_screen()
+            BaseUI.show_header(f"會員詳情 - {member.name}")
+            
+            # 獲取會員摘要
+            summary = self.member_service.get_member_summary(member.id)
+            
+            # 顯示會員基本信息
+            print("📋 基本信息：")
+            print("─" * 79)
+            print(f"  會員號：  {member.member_no}")
+            print(f"  姓名：    {member.name}")
+            print(f"  手機：    {member.phone}")
+            print(f"  郵箱：    {member.email}")
+            print(f"  狀態：    {member.get_status_display()}")
+            print(f"  創建時間：{member.format_datetime('created_at')}")
+            print(f"  更新時間：{member.format_datetime('updated_at')}")
+            
+            # 顯示卡片統計
+            print(f"\n💳 卡片統計：")
+            print("─" * 79)
+            print(f"  總卡片數：  {summary.get('cards_count', 0)} 張")
+            print(f"  活躍卡片：  {summary.get('active_cards_count', 0)} 張")
+            print(f"  總餘額：    {Formatter.format_currency(summary.get('total_balance', 0))}")
+            print(f"  總積分：    {Formatter.format_points(summary.get('total_points', 0))}")
+            print(f"  最高等級：  {Formatter.format_level(summary.get('highest_level', 0))}")
+            
+            # 顯示卡片詳細列表
+            cards = self.member_service.get_member_cards(member.id)
+            if cards:
+                print(f"\n💳 卡片列表：")
+                print("─" * 79)
+                for i, card in enumerate(cards, 1):
+                    print(f"  {i}. {card.card_no} ({card.get_card_type_display()})")
+                    print(f"     餘額: {Formatter.format_currency(card.balance)} | "
+                          f"積分: {card.points or 0} | "
+                          f"等級: {card.get_level_display()} | "
+                          f"狀態: {card.get_status_display()}")
+                print("─" * 79)
+            
+            BaseUI.pause()
+            
+        except Exception as e:
+            BaseUI.show_error(f"查詢失敗：{e}")
+            BaseUI.pause()
+    
+    def _edit_member_profile_improved(self, member):
+        """編輯會員資料（零 UUID 暴露）"""
+        try:
+            BaseUI.clear_screen()
+            BaseUI.show_header(f"編輯會員資料 - {member.name}")
+            
+            # 顯示當前信息
+            print("\n當前信息：")
+            print(f"  姓名：{member.name}")
+            print(f"  手機：{member.phone}")
+            print(f"  郵箱：{member.email}")
+            
+            # 輸入新信息
+            print("\n請輸入新信息（留空保持不變）：")
+            new_name = input(f"姓名 [{member.name}]: ").strip() or None
+            new_phone = input(f"手機 [{member.phone}]: ").strip() or None
+            new_email = input(f"郵箱 [{member.email}]: ").strip() or None
+            
+            if not any([new_name, new_phone, new_email]):
+                BaseUI.show_info("沒有需要更新的內容")
+                BaseUI.pause()
+                return
+            
+            # 顯示更新摘要
+            print("\n更新摘要：")
+            if new_name:
+                print(f"  姓名：{member.name} → {new_name}")
+            if new_phone:
+                print(f"  手機：{member.phone} → {new_phone}")
+            if new_email:
+                print(f"  郵箱：{member.email} → {new_email}")
+            
+            if not BaseUI.confirm_action("\n確認更新？"):
+                BaseUI.show_info("已取消")
+                BaseUI.pause()
+                return
+            
+            # 執行更新（使用會員號）
+            BaseUI.show_loading("更新中...")
+            result = self.member_service.update_member_by_identifier(
+                member.member_no,  # 使用會員號
+                new_name,
+                new_phone,
+                new_email
+            )
+            
+            if result:
+                # 更新本地對象
+                if new_name:
+                    member.name = new_name
+                if new_phone:
+                    member.phone = new_phone
+                if new_email:
+                    member.email = new_email
+                
+                BaseUI.show_success("會員資料更新成功")
+            else:
+                BaseUI.show_error("會員資料更新失敗")
+            
+            BaseUI.pause()
+            
+        except Exception as e:
+            BaseUI.show_error(f"更新失敗：{e}")
+            BaseUI.pause()
+    
+    def _reset_member_password_improved(self, member):
+        """重置會員密碼（零 UUID 暴露）"""
+        try:
+            BaseUI.clear_screen()
+            BaseUI.show_header(f"重置密碼 - {member.name}")
+            
+            # 顯示會員信息
+            print("\n會員信息：")
+            print(f"  會員號：{member.member_no}")
+            print(f"  姓名：  {member.name}")
+            print(f"  手機：  {member.phone}")
+            
+            # 密碼重置選項
+            print("\n🔒 密碼重置選項：")
+            print("1. 重置為手機號")
+            print("2. 設置自定義密碼")
+            print("3. 取消")
+            
+            choice = input("\n請選擇 (1-3): ").strip()
+            
+            new_password = None
+            password_display = ""
+            
+            if choice == "1":
+                new_password = member.phone
+                password_display = f"手機號：{member.phone}"
+            elif choice == "2":
+                import getpass
+                while True:
+                    new_password = getpass.getpass("\n請輸入新密碼: ")
+                    if not new_password:
+                        BaseUI.show_error("密碼不能為空")
+                        continue
+                    
+                    if len(new_password) < 6:
+                        BaseUI.show_error("密碼長度至少 6 個字符")
+                        continue
+                    
+                    confirm = getpass.getpass("請確認新密碼: ")
+                    if new_password != confirm:
+                        BaseUI.show_error("兩次密碼輸入不一致")
+                        continue
+                    
+                    password_display = "自定義密碼"
+                    break
+            elif choice == "3":
+                BaseUI.show_info("已取消")
+                BaseUI.pause()
+                return
+            else:
+                BaseUI.show_error("無效的選擇")
+                BaseUI.pause()
+                return
+            
+            # 確認重置
+            print("\n" + "═" * 79)
+            print(f"確認重置 {member.name} 的密碼")
+            print(f"新密碼：{password_display}")
+            print("═" * 79)
+            
+            if not BaseUI.confirm_action("\n確認重置？"):
+                BaseUI.show_info("已取消")
+                BaseUI.pause()
+                return
+            
+            # 執行重置（使用會員號）
+            BaseUI.show_loading("重置中...")
+            self.member_service.set_member_password_by_identifier(member.member_no, new_password)
+            
+            BaseUI.show_success("密碼重置成功", {
+                "會員": member.name,
+                "新密碼": password_display
+            })
+            
+            BaseUI.pause()
+            
+        except Exception as e:
+            BaseUI.show_error(f"重置失敗：{e}")
+            BaseUI.pause()
+    
+    def _manage_member_cards_improved(self, member):
+        """管理會員卡片（零 UUID 暴露）"""
+        while True:
+            try:
+                BaseUI.clear_screen()
+                BaseUI.show_header(f"管理卡片 - {member.name}")
+                
+                # 獲取會員卡片
+                cards = self.member_service.get_member_cards(member.id)
+                
+                if not cards:
+                    BaseUI.show_info("該會員暫無卡片")
+                    BaseUI.pause()
+                    return
+                
+                # 顯示卡片列表（不包含 UUID）
+                print("\n💳 會員卡片：")
+                print("─" * 79)
+                print(f"{'序號':<4} {'卡號':<12} {'類型':<10} {'餘額':<12} "
+                      f"{'積分':<8} {'狀態':<8}")
+                print("─" * 79)
+                
+                for i, card in enumerate(cards, 1):
+                    print(f"{i:<4} {card.card_no:<12} {card.get_card_type_display():<10} "
+                          f"{Formatter.format_currency(card.balance):<12} "
+                          f"{card.points or 0:<8} {card.get_status_display():<8}")
+                
+                print("─" * 79)
+                
+                # 操作選項
+                print("\n操作選項：")
+                print(f"  [1-{len(cards)}] 選擇卡片進行操作")
+                print("  [Q] 返回")
+                
+                choice = input("\n請選擇: ").strip().upper()
+                
+                if choice == 'Q':
+                    break
+                elif choice.isdigit():
+                    idx = int(choice)
+                    if 1 <= idx <= len(cards):
+                        selected_card = cards[idx - 1]
+                        self._card_action_menu(selected_card)
+                    else:
+                        BaseUI.show_error(f"請輸入 1-{len(cards)}")
+                        BaseUI.pause()
+                else:
+                    BaseUI.show_error("無效的選擇")
+                    BaseUI.pause()
+                
+            except Exception as e:
+                BaseUI.show_error(f"操作失敗：{e}")
+                BaseUI.pause()
+                break
+    
+    def _view_member_transactions_improved(self, member):
+        """查看會員交易記錄（零 UUID 暴露）"""
+        try:
+            BaseUI.clear_screen()
+            BaseUI.show_header(f"交易記錄 - {member.name}")
+            
+            # 獲取交易記錄
+            result = self.member_service.get_member_transactions(member.id, 20, 0)
+            transactions = result.get('data', [])
+            
+            if not transactions:
+                BaseUI.show_info("該會員暫無交易記錄")
+                BaseUI.pause()
+                return
+            
+            # 顯示交易記錄
+            print("\n📊 最近交易：")
+            print("─" * 79)
+            print(f"{'交易號':<20} {'類型':<10} {'金額':<12} {'狀態':<8} {'時間':<20}")
+            print("─" * 79)
+            
+            for tx in transactions[:10]:  # 只顯示前 10 筆
+                print(f"{tx.tx_no:<20} {tx.get_tx_type_display():<10} "
+                      f"{Formatter.format_currency(tx.final_amount):<12} "
+                      f"{tx.get_status_display():<8} {tx.format_datetime('created_at'):<20}")
+            
+            print("─" * 79)
+            print(f"\n共 {result.get('pagination', {}).get('total_count', 0)} 筆交易")
+            
+            BaseUI.pause()
+            
+        except Exception as e:
+            BaseUI.show_error(f"查詢失敗：{e}")
+            BaseUI.pause()
+    
+    def _toggle_member_status_improved(self, member):
+        """切換會員狀態（零 UUID 暴露）"""
+        try:
+            BaseUI.clear_screen()
+            BaseUI.show_header(f"切換狀態 - {member.name}")
+            
+            # 顯示當前狀態
+            print(f"\n當前狀態：{member.get_status_display()}")
+            
+            # 選擇新狀態
+            print("\n請選擇新狀態：")
+            print("1. 活躍 (active)")
+            print("2. 非活躍 (inactive)")
+            print("3. 暫停 (suspended)")
+            print("4. 取消")
+            
+            choice = input("\n請選擇 (1-4): ").strip()
+            
+            status_map = {
+                "1": "active",
+                "2": "inactive",
+                "3": "suspended"
+            }
+            
+            if choice not in status_map:
+                BaseUI.show_info("已取消")
+                BaseUI.pause()
+                return
+            
+            new_status = status_map[choice]
+            
+            if new_status == member.status:
+                BaseUI.show_info("狀態未改變")
+                BaseUI.pause()
+                return
+            
+            # 確認切換
+            if not BaseUI.confirm_action(f"\n確認將狀態切換為 {new_status}？"):
+                BaseUI.show_info("已取消")
+                BaseUI.pause()
+                return
+            
+            # 執行切換（使用會員號）
+            BaseUI.show_loading("切換中...")
+            result = self.member_service.toggle_member_status_by_identifier(
+                member.member_no,
+                new_status
+            )
+            
+            if result:
+                member.status = new_status
+                BaseUI.show_success("狀態切換成功", {
+                    "會員": member.name,
+                    "新狀態": new_status
+                })
+            else:
+                BaseUI.show_error("狀態切換失敗")
+            
+            BaseUI.pause()
+            
+        except Exception as e:
+            BaseUI.show_error(f"切換失敗：{e}")
+            BaseUI.pause()
+    
+    def _browse_all_members_improved(self):
+        """瀏覽所有會員 - 改進版（零 UUID 暴露）"""
+        page = 1
+        page_size = 20
+        
+        while True:
+            try:
+                BaseUI.clear_screen()
+                BaseUI.show_header(f"瀏覽所有會員 - 第 {page} 頁")
+                
+                BaseUI.show_loading("載入中...")
+                
+                # 獲取會員列表
+                offset = (page - 1) * page_size
+                result = self.member_service.get_all_members(page_size, offset)
+                
+                members = result['data']
+                pagination = result['pagination']
+                
+                if not members:
+                    BaseUI.show_info("沒有會員記錄")
+                    BaseUI.pause()
+                    return
+                
+                # 顯示會員列表（不包含 UUID）
+                print("\n─" * 79)
+                print(f"{'序號':<4} {'會員號':<12} {'姓名':<10} {'手機':<13} "
+                      f"{'郵箱':<20} {'狀態':<8}")
+                print("─" * 79)
+                
+                for i, member in enumerate(members, 1):
+                    print(f"{i:<4} {member.member_no:<12} {member.name:<10} "
+                          f"{member.phone:<13} {member.email:<20} "
+                          f"{member.get_status_display():<8}")
+                
+                print("─" * 79)
+                
+                # 分頁信息
+                print(f"\n📄 第 {page} / {pagination['total_pages']} 頁 | "
+                      f"共 {pagination['total_count']} 個會員")
+                
+                # 操作選項
+                print("\n操作選項：")
+                print(f"  [1-{len(members)}] 選擇會員進行操作")
+                if pagination['has_next']:
+                    print("  [N] 下一頁")
+                if pagination['has_prev']:
+                    print("  [P] 上一頁")
+                print("  [S] 搜尋")
+                print("  [Q] 返回")
+                
+                choice = input("\n請選擇: ").strip().upper()
+                
+                if choice.isdigit():
+                    idx = int(choice)
+                    if 1 <= idx <= len(members):
+                        selected_member = members[idx - 1]
+                        self._member_action_menu(selected_member)
+                    else:
+                        BaseUI.show_error(f"請輸入 1-{len(members)}")
+                        BaseUI.pause()
+                elif choice == 'N' and pagination['has_next']:
+                    page += 1
+                elif choice == 'P' and pagination['has_prev']:
+                    page -= 1
+                elif choice == 'S':
+                    self._search_and_manage_members()
+                    return
+                elif choice == 'Q':
+                    break
+                else:
+                    BaseUI.show_error("無效的選擇")
+                    BaseUI.pause()
+                    
+            except Exception as e:
+                BaseUI.show_error(f"瀏覽失敗：{e}")
+                BaseUI.pause()
+                break
+    
+    # ========== 新增：卡片搜尋並管理功能（零 UUID 暴露）==========
+    
+    def _search_and_manage_cards(self):
+        """搜尋並管理卡片 - 統一入口（零 UUID 暴露）"""
+        while True:
+            BaseUI.clear_screen()
+            BaseUI.show_header("搜尋並管理卡片")
+            
+            # 顯示搜尋提示
+            print("\n💡 您可以輸入：")
+            print("  • 卡號（如：C202501001）")
+            print("  • 持卡人姓名（如：張三）")
+            print("  • 持卡人手機（如：138）- 支持部分匹配")
+            
+            keyword = input("\n請輸入搜尋關鍵字（或按 Enter 返回）: ").strip()
+            
+            if not keyword:
+                return
+            
+            # 執行搜尋
+            BaseUI.show_loading("搜尋中...")
+            
+            try:
+                cards = self.admin_service.search_cards_advanced(keyword, 50)
+                
+                if not cards:
+                    BaseUI.show_info("未找到匹配的卡片")
+                    BaseUI.pause()
+                    continue
+                
+                # 顯示搜尋結果並選擇
+                selected_card = self._display_and_select_card(cards, keyword)
+                
+                if selected_card:
+                    # 進入卡片操作菜單
+                    self._card_action_menu(selected_card)
+                
+            except Exception as e:
+                BaseUI.show_error(f"搜尋失敗：{e}")
+                BaseUI.pause()
+    
+    def _display_and_select_card(self, cards: List, keyword: str) -> Optional:
+        """顯示搜尋結果並選擇卡片（零 UUID 暴露）"""
+        while True:
+            BaseUI.clear_screen()
+            
+            # 顯示搜尋結果
+            print(f"🔍 搜尋結果（關鍵字：{keyword}，找到 {len(cards)} 張卡片）：")
+            print("─" * 79)
+            print(f"{'序號':<4} {'卡號':<12} {'類型':<10} {'持卡人':<10} "
+                  f"{'餘額':<12} {'狀態':<8}")
+            print("─" * 79)
+            
+            for i, card in enumerate(cards, 1):
+                owner_name = card.owner_name if hasattr(card, 'owner_name') else 'N/A'
+                print(f"{i:<4} {card.card_no:<12} {card.get_card_type_display():<10} "
+                      f"{owner_name:<10} "
+                      f"{Formatter.format_currency(card.balance):<12} "
+                      f"{card.get_status_display():<8}")
+            
+            print("─" * 79)
+            
+            # 操作選項
+            print("\n操作選項：")
+            print(f"  [1-{len(cards)}] 選擇卡片進行操作")
+            print("  [R] 重新搜尋")
+            print("  [Q] 返回")
+            
+            choice = input("\n請選擇: ").strip().upper()
+            
+            if choice == 'R':
+                return None  # 重新搜尋
+            elif choice == 'Q':
+                return None  # 返回
+            elif choice.isdigit():
+                idx = int(choice)
+                if 1 <= idx <= len(cards):
+                    return cards[idx - 1]
+                else:
+                    BaseUI.show_error(f"請輸入 1-{len(cards)}")
+                    BaseUI.pause()
+            else:
+                BaseUI.show_error("無效的選擇")
+                BaseUI.pause()
+    
+    def _card_action_menu(self, card):
+        """卡片操作菜單（零 UUID 暴露）"""
+        while True:
+            BaseUI.clear_screen()
+            
+            # 顯示卡片信息（不包含 UUID）
+            print("═" * 79)
+            print(f"卡片操作 - {card.card_no}")
+            print("═" * 79)
+            print(f"卡號：    {card.card_no}")
+            print(f"類型：    {card.get_card_type_display()}")
+            if hasattr(card, 'owner_name') and card.owner_name:
+                print(f"持卡人：  {card.owner_name}")
+                if hasattr(card, 'owner_phone'):
+                    print(f"手機：    {card.owner_phone}")
+            print(f"餘額：    {Formatter.format_currency(card.balance)}")
+            print(f"積分：    {card.points or 0}")
+            print(f"等級：    {card.get_level_display()}")
+            print(f"狀態：    {card.get_status_display()}")
+            print("═" * 79)
+            
+            # 操作選項
+            options = [
+                "📋 查看完整詳情 (View Full Details)",
+                "💰 卡片充值 (Recharge Card)",
+                "💸 申請退款 (Request Refund)",
+                "📊 查看交易記錄 (View Transactions)",
+                "👤 查看持卡人信息 (View Owner Info)",
+                "🔗 管理綁定 (Manage Bindings)",
+                "❄️  凍結/解凍 (Freeze/Unfreeze)",
+                "🔙 返回 (Back)"
+            ]
+            
+            choice = BaseUI.show_menu(options, "請選擇操作")
+            
+            if choice == 1:
+                self._view_card_full_details_improved(card)
+            elif choice == 2:
+                self._recharge_card_directly(card)
+            elif choice == 3:
+                self._refund_card_directly(card)
+            elif choice == 4:
+                self._view_card_transactions_improved(card)
+            elif choice == 5:
+                self._view_card_owner_info_improved(card)
+            elif choice == 6:
+                self._manage_card_bindings(card)
+            elif choice == 7:
+                self._toggle_card_status_improved(card)
+            elif choice == 8:
+                break
+    
+    def _view_card_full_details_improved(self, card):
+        """查看卡片完整詳情（零 UUID 暴露）"""
+        try:
+            BaseUI.clear_screen()
+            BaseUI.show_header(f"卡片詳情 - {card.card_no}")
+            
+            # 顯示卡片詳細信息
+            print("📋 卡片信息：")
+            print("─" * 79)
+            print(f"  卡號：      {card.card_no}")
+            print(f"  類型：      {card.get_card_type_display()}")
+            print(f"  名稱：      {card.name or 'N/A'}")
+            print(f"  餘額：      {Formatter.format_currency(card.balance)}")
+            print(f"  積分：      {card.points or 0}")
+            print(f"  等級：      {card.get_level_display()}")
+            print(f"  折扣：      {card.get_discount_display()}")
+            print(f"  狀態：      {card.get_status_display()}")
+            print(f"  創建時間：  {card.format_datetime('created_at')}")
+            
+            if card.expires_at:
+                print(f"  過期時間：  {card.format_datetime('expires_at')}")
+            
+            # 顯示持卡人信息
+            if hasattr(card, 'owner_name') and card.owner_name:
+                print(f"\n👤 持卡人信息：")
+                print("─" * 79)
+                print(f"  姓名：      {card.owner_name}")
+                if hasattr(card, 'owner_phone'):
+                    print(f"  手機：      {card.owner_phone}")
+                if hasattr(card, 'owner_email'):
+                    print(f"  郵箱：      {card.owner_email}")
+            
+            BaseUI.pause()
+            
+        except Exception as e:
+            BaseUI.show_error(f"查詢失敗：{e}")
+            BaseUI.pause()
+    
+    def _view_card_owner_info_improved(self, card):
+        """查看持卡人信息（零 UUID 暴露）"""
+        try:
+            BaseUI.clear_screen()
+            BaseUI.show_header(f"持卡人信息 - {card.card_no}")
+            
+            if not hasattr(card, 'owner_member_id') or not card.owner_member_id:
+                BaseUI.show_info("此卡片暫無持卡人信息")
+                BaseUI.pause()
+                return
+            
+            # 獲取持卡人詳細信息
+            member = self.member_service.get_member_by_id(card.owner_member_id)
+            
+            if not member:
+                BaseUI.show_error("無法獲取持卡人信息")
+                BaseUI.pause()
+                return
+            
+            # 顯示持卡人信息
+            print("👤 持卡人信息：")
+            print("─" * 79)
+            print(f"  會員號：  {member.member_no}")
+            print(f"  姓名：    {member.name}")
+            print(f"  手機：    {member.phone}")
+            print(f"  郵箱：    {member.email}")
+            print(f"  狀態：    {member.get_status_display()}")
+            
+            # 詢問是否進入會員操作菜單
+            print("\n")
+            if BaseUI.confirm_action("是否進入該會員的操作菜單？"):
+                self._member_action_menu(member)
+            else:
+                BaseUI.pause()
+            
+        except Exception as e:
+            BaseUI.show_error(f"查詢失敗：{e}")
+            BaseUI.pause()
+    
+    def _view_card_transactions_improved(self, card):
+        """查看卡片交易記錄（零 UUID 暴露）"""
+        try:
+            BaseUI.clear_screen()
+            BaseUI.show_header(f"交易記錄 - {card.card_no}")
+            
+            # 獲取交易記錄（使用卡片 ID）
+            # 注意：這裡仍需要使用 ID，因為交易記錄是通過卡片 ID 查詢的
+            transactions = self.admin_service.get_card_transactions(card.id, 20)
+            
+            if not transactions:
+                BaseUI.show_info("該卡片暫無交易記錄")
+                BaseUI.pause()
+                return
+            
+            # 顯示交易記錄
+            print("\n📊 最近交易：")
+            print("─" * 79)
+            print(f"{'交易號':<20} {'類型':<10} {'金額':<12} {'狀態':<8} {'時間':<20}")
+            print("─" * 79)
+            
+            for tx in transactions[:10]:  # 只顯示前 10 筆
+                print(f"{tx.tx_no:<20} {tx.get_tx_type_display():<10} "
+                      f"{Formatter.format_currency(tx.final_amount):<12} "
+                      f"{tx.get_status_display():<8} {tx.format_datetime('created_at'):<20}")
+            
+            print("─" * 79)
+            print(f"\n共 {len(transactions)} 筆交易")
+            
+            BaseUI.pause()
+            
+        except Exception as e:
+            BaseUI.show_error(f"查詢失敗：{e}")
+            BaseUI.pause()
+    
+    def _toggle_card_status_improved(self, card):
+        """切換卡片狀態（零 UUID 暴露）"""
+        try:
+            BaseUI.clear_screen()
+            BaseUI.show_header(f"切換狀態 - {card.card_no}")
+            
+            # 顯示當前狀態
+            print(f"\n當前狀態：{card.get_status_display()}")
+            
+            # 選擇新狀態
+            print("\n請選擇新狀態：")
+            print("1. 活躍 (active)")
+            print("2. 凍結 (frozen)")
+            print("3. 過期 (expired)")
+            print("4. 取消")
+            
+            choice = input("\n請選擇 (1-4): ").strip()
+            
+            status_map = {
+                "1": "active",
+                "2": "frozen",
+                "3": "expired"
+            }
+            
+            if choice not in status_map:
+                BaseUI.show_info("已取消")
+                BaseUI.pause()
+                return
+            
+            new_status = status_map[choice]
+            
+            if new_status == card.status:
+                BaseUI.show_info("狀態未改變")
+                BaseUI.pause()
+                return
+            
+            # 確認切換
+            if not BaseUI.confirm_action(f"\n確認將狀態切換為 {new_status}？"):
+                BaseUI.show_info("已取消")
+                BaseUI.pause()
+                return
+            
+            # 執行切換（使用卡號）
+            BaseUI.show_loading("切換中...")
+            result = self.admin_service.toggle_card_status_by_card_no(
+                card.card_no,
+                new_status
+            )
+            
+            if result:
+                card.status = new_status
+                BaseUI.show_success("狀態切換成功", {
+                    "卡號": card.card_no,
+                    "新狀態": new_status
+                })
+            else:
+                BaseUI.show_error("狀態切換失敗")
+            
+            BaseUI.pause()
+            
+        except Exception as e:
+            BaseUI.show_error(f"切換失敗：{e}")
+            BaseUI.pause()
+    
+    def _browse_all_cards_improved(self):
+        """瀏覽所有卡片 - 改進版（零 UUID 暴露）"""
+        page = 1
+        page_size = 20
+        
+        while True:
+            try:
+                BaseUI.clear_screen()
+                BaseUI.show_header(f"瀏覽所有卡片 - 第 {page} 頁")
+                
+                BaseUI.show_loading("載入中...")
+                
+                # 獲取卡片列表
+                offset = (page - 1) * page_size
+                result = self.admin_service.get_all_cards(page_size, offset)
+                
+                cards = result['data']
+                pagination = result['pagination']
+                
+                if not cards:
+                    BaseUI.show_info("沒有卡片記錄")
+                    BaseUI.pause()
+                    return
+                
+                # 顯示卡片列表（不包含 UUID）
+                print("\n─" * 79)
+                print(f"{'序號':<4} {'卡號':<12} {'類型':<10} {'持卡人':<10} "
+                      f"{'餘額':<12} {'狀態':<8}")
+                print("─" * 79)
+                
+                for i, card in enumerate(cards, 1):
+                    owner_name = card.owner_name if hasattr(card, 'owner_name') else 'N/A'
+                    print(f"{i:<4} {card.card_no:<12} {card.get_card_type_display():<10} "
+                          f"{owner_name:<10} "
+                          f"{Formatter.format_currency(card.balance):<12} "
+                          f"{card.get_status_display():<8}")
+                
+                print("─" * 79)
+                
+                # 分頁信息
+                print(f"\n📄 第 {page} / {pagination['total_pages']} 頁 | "
+                      f"共 {pagination['total_count']} 張卡片")
+                
+                # 操作選項
+                print("\n操作選項：")
+                print(f"  [1-{len(cards)}] 選擇卡片進行操作")
+                if pagination['has_next']:
+                    print("  [N] 下一頁")
+                if pagination['has_prev']:
+                    print("  [P] 上一頁")
+                print("  [S] 搜尋")
+                print("  [Q] 返回")
+                
+                choice = input("\n請選擇: ").strip().upper()
+                
+                if choice.isdigit():
+                    idx = int(choice)
+                    if 1 <= idx <= len(cards):
+                        selected_card = cards[idx - 1]
+                        self._card_action_menu(selected_card)
+                    else:
+                        BaseUI.show_error(f"請輸入 1-{len(cards)}")
+                        BaseUI.pause()
+                elif choice == 'N' and pagination['has_next']:
+                    page += 1
+                elif choice == 'P' and pagination['has_prev']:
+                    page -= 1
+                elif choice == 'S':
+                    self._search_and_manage_cards()
+                    return
+                elif choice == 'Q':
+                    break
+                else:
+                    BaseUI.show_error("無效的選擇")
+                    BaseUI.pause()
+                    
+            except Exception as e:
+                BaseUI.show_error(f"瀏覽失敗：{e}")
+                BaseUI.pause()
+                break
+    
+    def _create_corporate_card(self):
+        """創建企業卡"""
+        BaseUI.show_info("創建企業卡功能開發中...")
+        BaseUI.pause()
+    
+    # ========== 新增：充值和退款功能 ==========
+    
+    def _recharge_card_for_member(self, member):
+        """為會員卡片充值"""
+        try:
+            BaseUI.clear_screen()
+            BaseUI.show_header(f"卡片充值 - {member.name}")
+            
+            # 獲取會員卡片
+            cards = self.member_service.get_member_cards(member.id)
+            
+            if not cards:
+                BaseUI.show_error("該會員暫無卡片")
+                BaseUI.pause()
+                return
+            
+            # 顯示卡片列表
+            print("\n💳 會員卡片：")
+            print("─" * 79)
+            print(f"{'序號':<4} {'卡號':<12} {'類型':<10} {'餘額':<12} {'狀態':<8}")
+            print("─" * 79)
+            
+            for i, card in enumerate(cards, 1):
+                print(f"{i:<4} {card.card_no:<12} {card.get_card_type_display():<10} "
+                      f"{Formatter.format_currency(card.balance):<12} "
+                      f"{card.get_status_display():<8}")
+            
+            print("─" * 79)
+            
+            # 選擇卡片
+            choice = input(f"\n請選擇要充值的卡片 (1-{len(cards)}) 或按 Enter 取消: ").strip()
+            
+            if not choice:
+                return
+            
+            if not choice.isdigit() or int(choice) < 1 or int(choice) > len(cards):
+                BaseUI.show_error("無效的選擇")
+                BaseUI.pause()
+                return
+            
+            selected_card = cards[int(choice) - 1]
+            
+            # 檢查卡片狀態
+            if selected_card.status != 'active':
+                BaseUI.show_error(f"卡片狀態為 {selected_card.get_status_display()}，無法充值")
+                BaseUI.pause()
+                return
+            
+            # 輸入充值金額
+            print(f"\n當前餘額：{Formatter.format_currency(selected_card.balance)}")
+            amount_str = input("請輸入充值金額: ").strip()
+            
+            try:
+                amount = float(amount_str)
+                if amount <= 0:
+                    BaseUI.show_error("充值金額必須大於 0")
+                    BaseUI.pause()
+                    return
+            except ValueError:
+                BaseUI.show_error("無效的金額")
+                BaseUI.pause()
+                return
+            
+            # 選擇支付方式
+            print("\n請選擇支付方式：")
+            print("1. 微信支付 (wechat)")
+            print("2. 支付寶 (alipay)")
+            print("3. 銀行卡 (bank_card)")
+            print("4. 現金 (cash)")
+            
+            payment_choice = input("\n請選擇 (1-4): ").strip()
+            payment_map = {
+                "1": "wechat",
+                "2": "alipay",
+                "3": "bank_card",
+                "4": "cash"
+            }
+            
+            payment_method = payment_map.get(payment_choice, "wechat")
+            
+            # 確認充值
+            print("\n" + "═" * 79)
+            print("充值確認")
+            print("═" * 79)
+            print(f"卡號：      {selected_card.card_no}")
+            print(f"當前餘額：  {Formatter.format_currency(selected_card.balance)}")
+            print(f"充值金額：  {Formatter.format_currency(amount)}")
+            print(f"充值後餘額：{Formatter.format_currency(selected_card.balance + amount)}")
+            print(f"支付方式：  {payment_method}")
+            print("═" * 79)
+            
+            if not BaseUI.confirm_action("\n確認充值？"):
+                BaseUI.show_info("已取消")
+                BaseUI.pause()
+                return
+            
+            # 執行充值
+            BaseUI.show_loading("充值中...")
+            
+            # 調用充值 RPC
+            result = self.admin_service.rpc_call("user_recharge_card", {
+                "p_card_id": selected_card.id,
+                "p_amount": amount,
+                "p_payment_method": payment_method,
+                "p_tag": {"admin_recharge": True, "admin_name": self.current_admin_name},
+                "p_reason": f"Admin recharge for {member.name}",
+                "p_session_id": None
+            })
+            
+            if result and len(result) > 0:
+                tx_info = result[0]
+                BaseUI.show_success("充值成功", {
+                    "交易號": tx_info.get('tx_no'),
+                    "充值金額": Formatter.format_currency(amount),
+                    "新餘額": Formatter.format_currency(selected_card.balance + amount)
+                })
+                
+                # 更新本地卡片餘額
+                selected_card.balance += amount
+            else:
+                BaseUI.show_error("充值失敗")
+            
+            BaseUI.pause()
+            
+        except Exception as e:
+            BaseUI.show_error(f"充值失敗：{e}")
+            BaseUI.pause()
+    
+    def _request_refund_for_member(self, member):
+        """為會員申請退款"""
+        try:
+            BaseUI.clear_screen()
+            BaseUI.show_header(f"申請退款 - {member.name}")
+            
+            # 獲取會員最近的交易記錄
+            result = self.member_service.get_member_transactions(member.id, 50, 0)
+            transactions = result.get('data', [])
+            
+            if not transactions:
+                BaseUI.show_info("該會員暫無交易記錄")
+                BaseUI.pause()
+                return
+            
+            # 過濾出可退款的交易（已完成的支付交易）
+            refundable_txs = [tx for tx in transactions 
+                            if tx.tx_type == 'payment' and tx.status in ['completed', 'refunded']]
+            
+            if not refundable_txs:
+                BaseUI.show_info("沒有可退款的交易")
+                BaseUI.pause()
+                return
+            
+            # 顯示可退款交易
+            print("\n📊 可退款交易：")
+            print("─" * 79)
+            print(f"{'序號':<4} {'交易號':<20} {'金額':<12} {'狀態':<10} {'時間':<20}")
+            print("─" * 79)
+            
+            for i, tx in enumerate(refundable_txs[:20], 1):  # 最多顯示 20 筆
+                print(f"{i:<4} {tx.tx_no:<20} "
+                      f"{Formatter.format_currency(tx.final_amount):<12} "
+                      f"{tx.get_status_display():<10} "
+                      f"{tx.format_datetime('created_at'):<20}")
+            
+            print("─" * 79)
+            
+            # 選擇交易
+            choice = input(f"\n請選擇要退款的交易 (1-{min(len(refundable_txs), 20)}) 或按 Enter 取消: ").strip()
+            
+            if not choice:
+                return
+            
+            if not choice.isdigit() or int(choice) < 1 or int(choice) > min(len(refundable_txs), 20):
+                BaseUI.show_error("無效的選擇")
+                BaseUI.pause()
+                return
+            
+            selected_tx = refundable_txs[int(choice) - 1]
+            
+            # 輸入退款金額
+            print(f"\n原交易金額：{Formatter.format_currency(selected_tx.final_amount)}")
+            
+            # 計算已退款金額
+            # TODO: 這裡應該查詢該交易的已退款金額
+            print("提示：輸入退款金額（留空則全額退款）")
+            amount_str = input("退款金額: ").strip()
+            
+            if not amount_str:
+                refund_amount = selected_tx.final_amount
+            else:
+                try:
+                    refund_amount = float(amount_str)
+                    if refund_amount <= 0 or refund_amount > selected_tx.final_amount:
+                        BaseUI.show_error(f"退款金額必須在 0 到 {selected_tx.final_amount} 之間")
+                        BaseUI.pause()
+                        return
+                except ValueError:
+                    BaseUI.show_error("無效的金額")
+                    BaseUI.pause()
+                    return
+            
+            # 輸入退款原因
+            reason = input("\n退款原因（可選）: ").strip() or "Admin initiated refund"
+            
+            # 確認退款
+            print("\n" + "═" * 79)
+            print("退款確認")
+            print("═" * 79)
+            print(f"交易號：    {selected_tx.tx_no}")
+            print(f"原金額：    {Formatter.format_currency(selected_tx.final_amount)}")
+            print(f"退款金額：  {Formatter.format_currency(refund_amount)}")
+            print(f"退款原因：  {reason}")
+            print("═" * 79)
+            
+            if not BaseUI.confirm_action("\n確認退款？"):
+                BaseUI.show_info("已取消")
+                BaseUI.pause()
+                return
+            
+            # 執行退款
+            # 注意：這需要商戶代碼，如果是管理員退款，需要特殊處理
+            BaseUI.show_info("管理員退款功能需要商戶授權，請使用商戶賬號進行退款操作")
+            BaseUI.pause()
+            
+        except Exception as e:
+            BaseUI.show_error(f"退款失敗：{e}")
+            BaseUI.pause()
+    
+    # ========== 新增：卡片直接操作功能 ==========
+    
+    def _recharge_card_directly(self, card):
+        """直接為卡片充值（從卡片菜單）"""
+        try:
+            BaseUI.clear_screen()
+            BaseUI.show_header(f"卡片充值 - {card.card_no}")
+            
+            # 檢查卡片狀態
+            if card.status != 'active':
+                BaseUI.show_error(f"卡片狀態為 {card.get_status_display()}，無法充值")
+                BaseUI.pause()
+                return
+            
+            # 顯示當前信息
+            print(f"\n卡號：{card.card_no}")
+            print(f"類型：{card.get_card_type_display()}")
+            print(f"當前餘額：{Formatter.format_currency(card.balance)}")
+            
+            # 輸入充值金額
+            amount_str = input("\n請輸入充值金額: ").strip()
+            
+            try:
+                amount = float(amount_str)
+                if amount <= 0:
+                    BaseUI.show_error("充值金額必須大於 0")
+                    BaseUI.pause()
+                    return
+            except ValueError:
+                BaseUI.show_error("無效的金額")
+                BaseUI.pause()
+                return
+            
+            # 選擇支付方式
+            print("\n請選擇支付方式：")
+            print("1. 微信支付 (wechat)")
+            print("2. 支付寶 (alipay)")
+            print("3. 銀行卡 (bank_card)")
+            print("4. 現金 (cash)")
+            
+            payment_choice = input("\n請選擇 (1-4): ").strip()
+            payment_map = {
+                "1": "wechat",
+                "2": "alipay",
+                "3": "bank_card",
+                "4": "cash"
+            }
+            
+            payment_method = payment_map.get(payment_choice, "wechat")
+            
+            # 確認充值
+            print("\n" + "═" * 79)
+            print("充值確認")
+            print("═" * 79)
+            print(f"卡號：      {card.card_no}")
+            print(f"當前餘額：  {Formatter.format_currency(card.balance)}")
+            print(f"充值金額：  {Formatter.format_currency(amount)}")
+            print(f"充值後餘額：{Formatter.format_currency(card.balance + amount)}")
+            print(f"支付方式：  {payment_method}")
+            print("═" * 79)
+            
+            if not BaseUI.confirm_action("\n確認充值？"):
+                BaseUI.show_info("已取消")
+                BaseUI.pause()
+                return
+            
+            # 執行充值
+            BaseUI.show_loading("充值中...")
+            
+            result = self.admin_service.rpc_call("user_recharge_card", {
+                "p_card_id": card.id,
+                "p_amount": amount,
+                "p_payment_method": payment_method,
+                "p_tag": {"admin_recharge": True, "admin_name": self.current_admin_name},
+                "p_reason": f"Admin recharge for card {card.card_no}",
+                "p_session_id": None
+            })
+            
+            if result and len(result) > 0:
+                tx_info = result[0]
+                BaseUI.show_success("充值成功", {
+                    "交易號": tx_info.get('tx_no'),
+                    "充值金額": Formatter.format_currency(amount),
+                    "新餘額": Formatter.format_currency(card.balance + amount)
+                })
+                
+                # 更新本地卡片餘額
+                card.balance += amount
+            else:
+                BaseUI.show_error("充值失敗")
+            
+            BaseUI.pause()
+            
+        except Exception as e:
+            BaseUI.show_error(f"充值失敗：{e}")
+            BaseUI.pause()
+    
+    def _refund_card_directly(self, card):
+        """直接為卡片申請退款（從卡片菜單）"""
+        try:
+            BaseUI.clear_screen()
+            BaseUI.show_header(f"申請退款 - {card.card_no}")
+            
+            # 獲取卡片交易記錄
+            transactions = self.admin_service.get_card_transactions(card.id, 50)
+            
+            if not transactions:
+                BaseUI.show_info("該卡片暫無交易記錄")
+                BaseUI.pause()
+                return
+            
+            # 過濾出可退款的交易
+            refundable_txs = [tx for tx in transactions 
+                            if tx.tx_type == 'payment' and tx.status in ['completed', 'refunded']]
+            
+            if not refundable_txs:
+                BaseUI.show_info("沒有可退款的交易")
+                BaseUI.pause()
+                return
+            
+            # 顯示可退款交易
+            print("\n📊 可退款交易：")
+            print("─" * 79)
+            print(f"{'序號':<4} {'交易號':<20} {'金額':<12} {'狀態':<10} {'時間':<20}")
+            print("─" * 79)
+            
+            for i, tx in enumerate(refundable_txs[:20], 1):
+                print(f"{i:<4} {tx.tx_no:<20} "
+                      f"{Formatter.format_currency(tx.final_amount):<12} "
+                      f"{tx.get_status_display():<10} "
+                      f"{tx.format_datetime('created_at'):<20}")
+            
+            print("─" * 79)
+            
+            # 選擇交易
+            choice = input(f"\n請選擇要退款的交易 (1-{min(len(refundable_txs), 20)}) 或按 Enter 取消: ").strip()
+            
+            if not choice:
+                return
+            
+            if not choice.isdigit() or int(choice) < 1 or int(choice) > min(len(refundable_txs), 20):
+                BaseUI.show_error("無效的選擇")
+                BaseUI.pause()
+                return
+            
+            selected_tx = refundable_txs[int(choice) - 1]
+            
+            # 輸入退款金額
+            print(f"\n原交易金額：{Formatter.format_currency(selected_tx.final_amount)}")
+            print("提示：輸入退款金額（留空則全額退款）")
+            amount_str = input("退款金額: ").strip()
+            
+            if not amount_str:
+                refund_amount = selected_tx.final_amount
+            else:
+                try:
+                    refund_amount = float(amount_str)
+                    if refund_amount <= 0 or refund_amount > selected_tx.final_amount:
+                        BaseUI.show_error(f"退款金額必須在 0 到 {selected_tx.final_amount} 之間")
+                        BaseUI.pause()
+                        return
+                except ValueError:
+                    BaseUI.show_error("無效的金額")
+                    BaseUI.pause()
+                    return
+            
+            # 輸入退款原因
+            reason = input("\n退款原因（可選）: ").strip() or "Admin initiated refund"
+            
+            # 確認退款
+            print("\n" + "═" * 79)
+            print("退款確認")
+            print("═" * 79)
+            print(f"交易號：    {selected_tx.tx_no}")
+            print(f"原金額：    {Formatter.format_currency(selected_tx.final_amount)}")
+            print(f"退款金額：  {Formatter.format_currency(refund_amount)}")
+            print(f"退款原因：  {reason}")
+            print("═" * 79)
+            
+            if not BaseUI.confirm_action("\n確認退款？"):
+                BaseUI.show_info("已取消")
+                BaseUI.pause()
+                return
+            
+            # 執行退款
+            BaseUI.show_info("管理員退款功能需要商戶授權，請使用商戶賬號進行退款操作")
+            BaseUI.pause()
+            
+        except Exception as e:
+            BaseUI.show_error(f"退款失敗：{e}")
+            BaseUI.pause()
+    
+    def _manage_card_bindings(self, card):
+        """管理卡片綁定"""
+        while True:
+            try:
+                BaseUI.clear_screen()
+                BaseUI.show_header(f"管理綁定 - {card.card_no}")
+                
+                # 獲取卡片綁定信息
+                bindings = self.member_service.get_card_bindings(card.id)
+                
+                # 顯示卡片信息
+                print(f"\n卡號：{card.card_no}")
+                print(f"類型：{card.get_card_type_display()}")
+                print(f"持卡人：{card.owner_name if hasattr(card, 'owner_name') else 'N/A'}")
+                print("─" * 79)
+                
+                # 顯示綁定列表
+                if bindings:
+                    print(f"\n🔗 當前綁定（{len(bindings)} 個）：")
+                    print("─" * 79)
+                    print(f"{'序號':<4} {'會員號':<12} {'姓名':<10} {'手機':<13} {'綁定時間':<20}")
+                    print("─" * 79)
+                    
+                    for i, binding in enumerate(bindings, 1):
+                        # 獲取綁定會員信息
+                        member = self.member_service.get_member_by_id(binding.member_id)
+                        if member:
+                            print(f"{i:<4} {member.member_no:<12} {member.name:<10} "
+                                  f"{member.phone:<13} {binding.format_datetime('created_at'):<20}")
+                    
+                    print("─" * 79)
+                else:
+                    print("\n🔗 當前綁定：無")
+                    print("─" * 79)
+                
+                # 操作選項
+                print("\n操作選項：")
+                print("  [A] 新增綁定")
+                if bindings:
+                    print(f"  [1-{len(bindings)}] 選擇綁定進行解除")
+                print("  [Q] 返回")
+                
+                choice = input("\n請選擇: ").strip().upper()
+                
+                if choice == 'Q':
+                    break
+                elif choice == 'A':
+                    self._add_card_binding(card)
+                elif choice.isdigit() and bindings:
+                    idx = int(choice)
+                    if 1 <= idx <= len(bindings):
+                        selected_binding = bindings[idx - 1]
+                        self._remove_card_binding(card, selected_binding)
+                    else:
+                        BaseUI.show_error(f"請輸入 1-{len(bindings)}")
+                        BaseUI.pause()
+                else:
+                    BaseUI.show_error("無效的選擇")
+                    BaseUI.pause()
+                
+            except Exception as e:
+                BaseUI.show_error(f"操作失敗：{e}")
+                BaseUI.pause()
+                break
+    
+    def _add_card_binding(self, card):
+        """新增卡片綁定"""
+        try:
+            BaseUI.clear_screen()
+            BaseUI.show_header(f"新增綁定 - {card.card_no}")
+            
+            print("\n請輸入要綁定的會員信息：")
+            print("（可以輸入會員號、手機號或郵箱）")
+            
+            keyword = input("\n會員識別碼: ").strip()
+            
+            if not keyword:
+                return
+            
+            # 搜尋會員
+            BaseUI.show_loading("搜尋中...")
+            members = self.member_service.search_members(keyword, 10)
+            
+            if not members:
+                BaseUI.show_error("未找到匹配的會員")
+                BaseUI.pause()
+                return
+            
+            # 顯示搜尋結果
+            BaseUI.clear_screen()
+            print(f"\n搜尋結果（找到 {len(members)} 個會員）：")
+            print("─" * 79)
+            print(f"{'序號':<4} {'會員號':<12} {'姓名':<10} {'手機':<13}")
+            print("─" * 79)
+            
+            for i, member in enumerate(members, 1):
+                print(f"{i:<4} {member.member_no:<12} {member.name:<10} {member.phone:<13}")
+            
+            print("─" * 79)
+            
+            # 選擇會員
+            choice = input(f"\n請選擇要綁定的會員 (1-{len(members)}) 或按 Enter 取消: ").strip()
+            
+            if not choice:
+                return
+            
+            if not choice.isdigit() or int(choice) < 1 or int(choice) > len(members):
+                BaseUI.show_error("無效的選擇")
+                BaseUI.pause()
+                return
+            
+            selected_member = members[int(choice) - 1]
+            
+            # 確認綁定
+            print("\n" + "═" * 79)
+            print("綁定確認")
+            print("═" * 79)
+            print(f"卡號：    {card.card_no}")
+            print(f"綁定給：  {selected_member.name} ({selected_member.member_no})")
+            print("═" * 79)
+            
+            if not BaseUI.confirm_action("\n確認綁定？"):
+                BaseUI.show_info("已取消")
+                BaseUI.pause()
+                return
+            
+            # 執行綁定
+            BaseUI.show_loading("綁定中...")
+            
+            result = self.member_service.rpc_call("bind_card_to_member", {
+                "p_card_id": card.id,
+                "p_member_id": selected_member.id
+            })
+            
+            if result:
+                BaseUI.show_success("綁定成功", {
+                    "卡號": card.card_no,
+                    "綁定給": f"{selected_member.name} ({selected_member.member_no})"
+                })
+            else:
+                BaseUI.show_error("綁定失敗")
+            
+            BaseUI.pause()
+            
+        except Exception as e:
+            BaseUI.show_error(f"綁定失敗：{e}")
+            BaseUI.pause()
+    
+    def _remove_card_binding(self, card, binding):
+        """解除卡片綁定"""
+        try:
+            BaseUI.clear_screen()
+            BaseUI.show_header(f"解除綁定 - {card.card_no}")
+            
+            # 獲取綁定會員信息
+            member = self.member_service.get_member_by_id(binding.member_id)
+            
+            if not member:
+                BaseUI.show_error("無法獲取會員信息")
+                BaseUI.pause()
+                return
+            
+            # 確認解除
+            print("\n" + "═" * 79)
+            print("解除綁定確認")
+            print("═" * 79)
+            print(f"卡號：      {card.card_no}")
+            print(f"解除綁定：  {member.name} ({member.member_no})")
+            print(f"綁定時間：  {binding.format_datetime('created_at')}")
+            print("═" * 79)
+            
+            if not BaseUI.confirm_action("\n確認解除綁定？"):
+                BaseUI.show_info("已取消")
+                BaseUI.pause()
+                return
+            
+            # 執行解除綁定
+            BaseUI.show_loading("解除中...")
+            
+            result = self.member_service.rpc_call("unbind_card_from_member", {
+                "p_card_id": card.id,
+                "p_member_id": member.id
+            })
+            
+            if result:
+                BaseUI.show_success("解除綁定成功", {
+                    "卡號": card.card_no,
+                    "已解除": f"{member.name} ({member.member_no})"
+                })
+            else:
+                BaseUI.show_error("解除綁定失敗")
+            
+            BaseUI.pause()
+            
+        except Exception as e:
+            BaseUI.show_error(f"解除綁定失敗：{e}")
             BaseUI.pause()

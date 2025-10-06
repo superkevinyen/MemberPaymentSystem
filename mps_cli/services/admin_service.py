@@ -4,6 +4,7 @@ from .member_service import MemberService
 from models.member import Member
 from models.card import Card
 from models.transaction import Transaction
+from utils.identifier_resolver import IdentifierResolver
 
 class AdminService(BaseService):
     """管理員服務"""
@@ -240,13 +241,23 @@ class AdminService(BaseService):
     def search_cards(self, keyword: str, limit: int = 50) -> List[Card]:
         """搜索卡片"""
         try:
-            search_fields = ["card_no", "name"]
-            cards_data = self.search_records("member_cards", search_fields, keyword, limit)
+            self.log_operation("搜索卡片", {
+                "keyword": keyword,
+                "limit": limit
+            })
             
-            cards = [Card.from_dict(card_data) for card_data in cards_data]
+            # 直接調用 RPC 函數
+            result = self.rpc_call("search_cards", {
+                "p_keyword": keyword,
+                "p_limit": limit
+            })
             
-            self.logger.debug(f"搜索卡片成功: 關鍵字 '{keyword}', 返回 {len(cards)} 個結果")
-            return cards
+            if result:
+                cards = [Card.from_dict(card_data) for card_data in result]
+                self.logger.debug(f"搜索卡片成功: 關鍵字 '{keyword}', 返回 {len(cards)} 個結果")
+                return cards
+            else:
+                return []
             
         except Exception as e:
             self.logger.error(f"搜索卡片失敗: 關鍵字 '{keyword}', 錯誤: {e}")
@@ -473,4 +484,63 @@ class AdminService(BaseService):
         except Exception as e:
             self.logger.error(f"系統健康檢查失敗: {e}")
             raise self.handle_service_error("系統健康檢查", e, {})
+    
+    # ========== 新增：支持卡號的方法 ==========
+    
+    def get_card_by_card_no(self, card_no: str) -> Optional[Card]:
+        """通過卡號獲取卡片詳情
+        
+        Args:
+            card_no: 卡號
+        
+        Returns:
+            Card 對象或 None
+        """
+        try:
+            self.log_operation("通過卡號獲取卡片", {
+                "card_no": card_no
+            })
+            
+            # 使用新的 RPC 函數
+            result = self.rpc_call("get_card_details_by_card_no", {
+                "p_card_no": card_no
+            })
+            
+            if result:
+                return Card.from_dict(result)
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"通過卡號獲取卡片失敗: {card_no}, 錯誤: {e}")
+            return None
+    
+    def toggle_card_status_by_card_no(self, card_no: str, new_status: str) -> bool:
+        """通過卡號切換卡片狀態
+        
+        Args:
+            card_no: 卡號
+            new_status: 新狀態 (active, frozen, expired)
+        
+        Returns:
+            bool: 是否切換成功
+        """
+        try:
+            self.log_operation("通過卡號切換狀態", {
+                "card_no": card_no,
+                "new_status": new_status
+            })
+            
+            # 使用新的 RPC 函數
+            result = self.rpc_call("toggle_card_status_by_card_no", {
+                "p_card_no": card_no,
+                "p_new_status": new_status
+            })
+            
+            return bool(result)
+            
+        except Exception as e:
+            self.logger.error(f"通過卡號切換狀態失敗: {card_no}, 錯誤: {e}")
+            raise self.handle_service_error("切換卡片狀態", e, {
+                "card_no": card_no
+            })
     

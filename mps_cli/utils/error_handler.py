@@ -89,9 +89,21 @@ class ErrorHandler:
             "NOT_MERCHANT_USER": "請聯繫管理員檢查商戶權限",
             "REFUND_EXCEEDS_REMAINING": "請檢查原交易的可退金額",
             "EXTERNAL_ID_ALREADY_BOUND": "請使用其他外部身份或聯繫客服解綁",
-            "INVALID_BINDING_PASSWORD": "請確認綁定密碼是否正確",
+            "INVALID_BINDING_PASSWORD": "請確認綁定密碼是否正確或聯繫企業卡管理員",
             "CARD_TYPE_NOT_SHAREABLE": "標準卡和優惠券卡不支持共享",
-            "UNSUPPORTED_CARD_TYPE_FOR_RECHARGE": "只有預付卡和企業卡支持充值"
+            "UNSUPPORTED_CARD_TYPE_FOR_RECHARGE": "只有標準卡支持充值，企業卡和代金券卡不可充值",
+            "MEMBER_NOT_FOUND": "請檢查會員 ID 是否正確，或使用搜尋功能查找會員",
+            "MERCHANT_NOT_FOUND": "請檢查商戶代碼是否正確",
+            "PERMISSION_DENIED": "您沒有執行此操作的權限，請聯繫管理員",
+            "CARD_ALREADY_BOUND": "此卡片已被綁定，請先解綁或使用其他卡片",
+            "INVALID_PHONE_FORMAT": "手機號格式不正確，請輸入 11 位數字",
+            "INVALID_EMAIL_FORMAT": "郵箱格式不正確，請檢查後重新輸入",
+            "DUPLICATE_PHONE": "此手機號已被註冊，請使用其他手機號",
+            "DUPLICATE_EMAIL": "此郵箱已被註冊，請使用其他郵箱",
+            "PASSWORD_TOO_SHORT": "密碼長度至少 6 個字符",
+            "INVALID_AMOUNT": "金額格式不正確，請輸入有效的數字",
+            "AMOUNT_TOO_SMALL": "金額過小，請輸入大於最小限額的金額",
+            "AMOUNT_TOO_LARGE": "金額過大，請輸入小於最大限額的金額"
         }
         
         return solutions.get(error_code)
