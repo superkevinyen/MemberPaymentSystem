@@ -50,6 +50,17 @@ DROP FUNCTION IF EXISTS cleanup_expired_sessions() CASCADE;
 DROP FUNCTION IF EXISTS load_session(text) CASCADE;
 DROP FUNCTION IF EXISTS logout_session(text) CASCADE;
 
+-- 新增 RPC 函數的 DROP 語句
+DROP FUNCTION IF EXISTS get_all_members(integer, integer, member_status) CASCADE;
+DROP FUNCTION IF EXISTS search_members_advanced(text, text, text, text, member_status, integer) CASCADE;
+DROP FUNCTION IF EXISTS update_member_profile(uuid, text, text, text) CASCADE;
+DROP FUNCTION IF EXISTS get_all_cards(integer, integer, card_type, card_status, text) CASCADE;
+DROP FUNCTION IF EXISTS search_cards(text, integer) CASCADE;
+DROP FUNCTION IF EXISTS get_today_transaction_stats(uuid) CASCADE;
+DROP FUNCTION IF EXISTS get_transaction_trends(timestamptz, timestamptz, uuid, text) CASCADE;
+DROP FUNCTION IF EXISTS get_system_statistics() CASCADE;
+DROP FUNCTION IF EXISTS system_health_check() CASCADE;
+
 -- Helper: create sec schema and functions if not exists
 CREATE SCHEMA IF NOT EXISTS sec;
 
@@ -2334,5 +2345,460 @@ END;
 $$;
 
 COMMENT ON FUNCTION get_settlement_detail IS '獲取結算詳情';
+
+-- ============================================================================
+-- NEW RPC FUNCTIONS FOR UI IMPROVEMENTS
+-- ============================================================================
+
+-- =======================
+-- 會員管理擴展函數
+-- =======================
+
+-- 分頁獲取所有會員
+CREATE OR REPLACE FUNCTION get_all_members(
+  p_limit integer DEFAULT 50,
+  p_offset integer DEFAULT 0,
+  p_status member_status DEFAULT NULL
+) RETURNS TABLE(
+  id uuid,
+  member_no text,
+  name text,
+  phone text,
+  email text,
+  status member_status,
+  created_at timestamptz,
+  total_count bigint
+) LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  PERFORM check_permission('super_admin');
+  
+  RETURN QUERY
+  SELECT
+    mp.id,
+    mp.member_no,
+    mp.name,
+    mp.phone,
+    mp.email,
+    mp.status,
+    mp.created_at,
+    COUNT(*) OVER() AS total_count
+  FROM member_profiles mp
+  WHERE (p_status IS NULL OR mp.status = p_status)
+  ORDER BY mp.created_at DESC
+  LIMIT p_limit OFFSET p_offset;
+END;
+$$;
+
+COMMENT ON FUNCTION get_all_members IS '分頁獲取所有會員（需要 super_admin 權限）';
+
+-- 高級會員搜尋
+CREATE OR REPLACE FUNCTION search_members_advanced(
+  p_name text DEFAULT NULL,
+  p_phone text DEFAULT NULL,
+  p_email text DEFAULT NULL,
+  p_member_no text DEFAULT NULL,
+  p_status member_status DEFAULT NULL,
+  p_limit integer DEFAULT 50
+) RETURNS TABLE(
+  id uuid,
+  member_no text,
+  name text,
+  phone text,
+  email text,
+  status member_status,
+  created_at timestamptz
+) LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  PERFORM check_permission('super_admin');
+  
+  RETURN QUERY
+  SELECT
+    mp.id,
+    mp.member_no,
+    mp.name,
+    mp.phone,
+    mp.email,
+    mp.status,
+    mp.created_at
+  FROM member_profiles mp
+  WHERE
+    (p_name IS NULL OR mp.name ILIKE '%' || p_name || '%')
+    AND (p_phone IS NULL OR mp.phone ILIKE '%' || p_phone || '%')
+    AND (p_email IS NULL OR mp.email ILIKE '%' || p_email || '%')
+    AND (p_member_no IS NULL OR mp.member_no ILIKE '%' || p_member_no || '%')
+    AND (p_status IS NULL OR mp.status = p_status)
+  ORDER BY mp.created_at DESC
+  LIMIT p_limit;
+END;
+$$;
+
+COMMENT ON FUNCTION search_members_advanced IS '高級會員搜尋（需要 super_admin 權限）';
+
+-- 更新會員資料
+CREATE OR REPLACE FUNCTION update_member_profile(
+  p_member_id uuid,
+  p_name text DEFAULT NULL,
+  p_phone text DEFAULT NULL,
+  p_email text DEFAULT NULL
+) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  PERFORM check_permission('super_admin');
+  
+  UPDATE member_profiles SET
+    name = COALESCE(p_name, name),
+    phone = COALESCE(p_phone, phone),
+    email = COALESCE(p_email, email),
+    updated_at = now_utc()
+  WHERE id = p_member_id;
+  
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'MEMBER_NOT_FOUND';
+  END IF;
+  
+  INSERT INTO audit.event_log(actor_user_id, action, object_type, object_id, context, happened_at)
+  VALUES (auth.uid(), 'UPDATE_MEMBER', 'member_profiles', p_member_id,
+          jsonb_build_object('name', p_name, 'phone', p_phone, 'email', p_email), now_utc());
+  
+  RETURN TRUE;
+END;
+$$;
+
+COMMENT ON FUNCTION update_member_profile IS '更新會員資料（需要 super_admin 權限）';
+
+-- =======================
+-- 卡片管理擴展函數
+-- =======================
+
+-- 分頁獲取所有卡片
+CREATE OR REPLACE FUNCTION get_all_cards(
+  p_limit integer DEFAULT 50,
+  p_offset integer DEFAULT 0,
+  p_card_type card_type DEFAULT NULL,
+  p_status card_status DEFAULT NULL,
+  p_owner_name text DEFAULT NULL
+) RETURNS TABLE(
+  id uuid,
+  card_no text,
+  card_type card_type,
+  name text,
+  balance numeric(12,2),
+  points int,
+  level int,
+  discount numeric(4,3),
+  status card_status,
+  owner_member_id uuid,
+  owner_name text,
+  owner_phone text,
+  created_at timestamptz,
+  total_count bigint
+) LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  PERFORM check_permission('super_admin');
+  
+  RETURN QUERY
+  SELECT
+    mc.id,
+    mc.card_no,
+    mc.card_type,
+    mc.name,
+    mc.balance,
+    mc.points,
+    mc.level,
+    mc.discount,
+    mc.status,
+    mc.owner_member_id,
+    mp.name as owner_name,
+    mp.phone as owner_phone,
+    mc.created_at,
+    COUNT(*) OVER() AS total_count
+  FROM member_cards mc
+  LEFT JOIN member_profiles mp ON mp.id = mc.owner_member_id
+  WHERE
+    (p_card_type IS NULL OR mc.card_type = p_card_type)
+    AND (p_status IS NULL OR mc.status = p_status)
+    AND (p_owner_name IS NULL OR mp.name ILIKE '%' || p_owner_name || '%')
+  ORDER BY mc.created_at DESC
+  LIMIT p_limit OFFSET p_offset;
+END;
+$$;
+
+COMMENT ON FUNCTION get_all_cards IS '分頁獲取所有卡片（需要 super_admin 權限）';
+
+-- 搜尋卡片
+CREATE OR REPLACE FUNCTION search_cards(
+  p_keyword text,
+  p_limit integer DEFAULT 50
+) RETURNS TABLE(
+  id uuid,
+  card_no text,
+  card_type card_type,
+  name text,
+  balance numeric(12,2),
+  points int,
+  level int,
+  discount numeric(4,3),
+  status card_status,
+  owner_member_id uuid,
+  owner_name text,
+  owner_phone text,
+  created_at timestamptz
+) LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  PERFORM check_permission('super_admin');
+  
+  RETURN QUERY
+  SELECT
+    mc.id,
+    mc.card_no,
+    mc.card_type,
+    mc.name,
+    mc.balance,
+    mc.points,
+    mc.level,
+    mc.discount,
+    mc.status,
+    mc.owner_member_id,
+    mp.name as owner_name,
+    mp.phone as owner_phone,
+    mc.created_at
+  FROM member_cards mc
+  LEFT JOIN member_profiles mp ON mp.id = mc.owner_member_id
+  WHERE
+    mc.card_no ILIKE '%' || p_keyword || '%'
+    OR mc.name ILIKE '%' || p_keyword || '%'
+    OR mp.name ILIKE '%' || p_keyword || '%'
+    OR mp.phone ILIKE '%' || p_keyword || '%'
+  ORDER BY mc.created_at DESC
+  LIMIT p_limit;
+END;
+$$;
+
+COMMENT ON FUNCTION search_cards IS '搜尋卡片（需要 super_admin 權限）';
+
+-- =======================
+-- 交易統計擴展函數
+-- =======================
+
+-- 今日交易統計
+CREATE OR REPLACE FUNCTION get_today_transaction_stats(
+  p_merchant_id uuid DEFAULT NULL
+) RETURNS TABLE(
+  transaction_count bigint,
+  payment_amount numeric(12,2),
+  refund_amount numeric(12,2),
+  net_amount numeric(12,2),
+  unique_customers bigint,
+  average_transaction numeric(12,2)
+) LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  v_today_start timestamptz := date_trunc('day', now_utc());
+BEGIN
+  RETURN QUERY
+  SELECT
+    COUNT(*) FILTER (WHERE tx_type = 'payment') AS transaction_count,
+    COALESCE(SUM(CASE WHEN tx_type = 'payment' THEN final_amount ELSE 0 END), 0) AS payment_amount,
+    COALESCE(SUM(CASE WHEN tx_type = 'refund' THEN final_amount ELSE 0 END), 0) AS refund_amount,
+    COALESCE(SUM(CASE WHEN tx_type = 'payment' THEN final_amount ELSE -final_amount END), 0) AS net_amount,
+    COUNT(DISTINCT card_id) FILTER (WHERE tx_type = 'payment') AS unique_customers,
+    COALESCE(AVG(CASE WHEN tx_type = 'payment' THEN final_amount ELSE NULL END), 0) AS average_transaction
+  FROM transactions
+  WHERE
+    date_trunc('day', created_at) = v_today_start
+    AND (p_merchant_id IS NULL OR merchant_id = p_merchant_id)
+    AND status IN ('completed', 'refunded');
+END;
+$$;
+
+COMMENT ON FUNCTION get_today_transaction_stats IS '今日交易統計';
+
+-- 交易趨勢分析
+CREATE OR REPLACE FUNCTION get_transaction_trends(
+  p_start_date timestamptz,
+  p_end_date timestamptz,
+  p_merchant_id uuid DEFAULT NULL,
+  p_group_by text DEFAULT 'day'  -- 'day', 'week', 'month'
+) RETURNS TABLE(
+  period_start timestamptz,
+  period_end timestamptz,
+  transaction_count bigint,
+  payment_amount numeric(12,2),
+  refund_amount numeric(12,2),
+  net_amount numeric(12,2),
+  unique_customers bigint,
+  average_transaction numeric(12,2)
+) LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    date_trunc(p_group_by, created_at) AS period_start,
+    (date_trunc(p_group_by, created_at) + INTERVAL '1 ' || p_group_by) AS period_end,
+    COUNT(*) FILTER (WHERE tx_type = 'payment') AS transaction_count,
+    COALESCE(SUM(CASE WHEN tx_type = 'payment' THEN final_amount ELSE 0 END), 0) AS payment_amount,
+    COALESCE(SUM(CASE WHEN tx_type = 'refund' THEN final_amount ELSE 0 END), 0) AS refund_amount,
+    COALESCE(SUM(CASE WHEN tx_type = 'payment' THEN final_amount ELSE -final_amount END), 0) AS net_amount,
+    COUNT(DISTINCT card_id) FILTER (WHERE tx_type = 'payment') AS unique_customers,
+    COALESCE(AVG(CASE WHEN tx_type = 'payment' THEN final_amount ELSE NULL END), 0) AS average_transaction
+  FROM transactions
+  WHERE
+    created_at >= p_start_date
+    AND created_at < p_end_date
+    AND (p_merchant_id IS NULL OR merchant_id = p_merchant_id)
+    AND status IN ('completed', 'refunded')
+  GROUP BY date_trunc(p_group_by, created_at)
+  ORDER BY period_start;
+END;
+$$;
+
+COMMENT ON FUNCTION get_transaction_trends IS '交易趨勢分析';
+
+-- =======================
+-- 系統管理擴展函數
+-- =======================
+
+-- 系統統計擴展
+CREATE OR REPLACE FUNCTION get_system_statistics()
+RETURNS TABLE(
+  members_total bigint,
+  members_active bigint,
+  members_inactive bigint,
+  members_suspended bigint,
+  cards_total bigint,
+  cards_active bigint,
+  cards_inactive bigint,
+  cards_by_type jsonb,
+  merchants_total bigint,
+  merchants_active bigint,
+  merchants_inactive bigint,
+  transactions_today bigint,
+  transactions_today_amount numeric(12,2),
+  transactions_this_month bigint,
+  transactions_this_month_amount numeric(12,2)
+) LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  v_today_start timestamptz := date_trunc('day', now_utc());
+  v_month_start timestamptz := date_trunc('month', now_utc());
+  v_cards_by_type jsonb;
+BEGIN
+  -- 統計卡片類型
+  SELECT jsonb_object_agg(card_type, count) INTO v_cards_by_type
+  FROM (
+    SELECT card_type, COUNT(*) as count
+    FROM member_cards
+    GROUP BY card_type
+  ) t;
+  
+  RETURN QUERY
+  SELECT
+    (SELECT COUNT(*) FROM member_profiles) AS members_total,
+    (SELECT COUNT(*) FROM member_profiles WHERE status = 'active') AS members_active,
+    (SELECT COUNT(*) FROM member_profiles WHERE status = 'inactive') AS members_inactive,
+    (SELECT COUNT(*) FROM member_profiles WHERE status = 'suspended') AS members_suspended,
+    (SELECT COUNT(*) FROM member_cards) AS cards_total,
+    (SELECT COUNT(*) FROM member_cards WHERE status = 'active') AS cards_active,
+    (SELECT COUNT(*) FROM member_cards WHERE status = 'inactive') AS cards_inactive,
+    v_cards_by_type AS cards_by_type,
+    (SELECT COUNT(*) FROM merchants) AS merchants_total,
+    (SELECT COUNT(*) FROM merchants WHERE status = 'active') AS merchants_active,
+    (SELECT COUNT(*) FROM merchants WHERE status = 'inactive') AS merchants_inactive,
+    (SELECT COUNT(*) FROM transactions
+     WHERE created_at >= v_today_start AND status IN ('completed', 'refunded')) AS transactions_today,
+    (SELECT COALESCE(SUM(final_amount), 0) FROM transactions
+     WHERE created_at >= v_today_start AND status IN ('completed', 'refunded')) AS transactions_today_amount,
+    (SELECT COUNT(*) FROM transactions
+     WHERE created_at >= v_month_start AND status IN ('completed', 'refunded')) AS transactions_this_month,
+    (SELECT COALESCE(SUM(final_amount), 0) FROM transactions
+     WHERE created_at >= v_month_start AND status IN ('completed', 'refunded')) AS transactions_this_month_amount;
+END;
+$$;
+
+COMMENT ON FUNCTION get_system_statistics IS '系統統計擴展（需要 super_admin 權限）';
+
+-- 系統健康檢查
+CREATE OR REPLACE FUNCTION system_health_check()
+RETURNS TABLE(
+  check_name text,
+  status text,
+  details jsonb,
+  recommendation text
+) LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  v_expired_sessions int;
+  v_expiring_qr int;
+  v_low_balance_cards int;
+  v_suspended_members int;
+  v_inactive_merchants int;
+BEGIN
+  -- 檢查過期 session
+  SELECT COUNT(*) INTO v_expired_sessions
+  FROM app_sessions
+  WHERE expires_at < now_utc();
+  
+  -- 檢查即將到期的 QR 碼（1小時內）
+  SELECT COUNT(*) INTO v_expiring_qr
+  FROM card_qr_state
+  WHERE expires_at BETWEEN now_utc() AND (now_utc() + interval '1 hour');
+  
+  -- 檢查低餘額卡片（少於 10 元）
+  SELECT COUNT(*) INTO v_low_balance_cards
+  FROM member_cards mc
+  WHERE mc.status = 'active'
+    AND mc.balance < 10
+    AND mc.card_type = 'standard';
+  
+  -- 檢查暫停會員
+  SELECT COUNT(*) INTO v_suspended_members
+  FROM member_profiles mp
+  WHERE mp.status = 'suspended';
+  
+  -- 檢查非活躍商戶
+  SELECT COUNT(*) INTO v_inactive_merchants
+  FROM merchants m
+  WHERE m.status = 'inactive';
+  
+  -- 返回檢查結果
+  RETURN QUERY
+  SELECT 'database_connection' AS check_name,
+         'ok' AS status,
+         jsonb_build_object('timestamp', now_utc()) AS details,
+         NULL AS recommendation
+  
+  UNION ALL
+  
+  SELECT 'expired_sessions' AS check_name,
+         CASE WHEN v_expired_sessions > 100 THEN 'warning' ELSE 'ok' END AS status,
+         jsonb_build_object('count', v_expired_sessions, 'threshold', 100) AS details,
+         CASE WHEN v_expired_sessions > 100 THEN '建議清理過期 session' ELSE NULL END AS recommendation
+  
+  UNION ALL
+  
+  SELECT 'expiring_qr_codes' AS check_name,
+         CASE WHEN v_expiring_qr > 50 THEN 'warning' ELSE 'ok' END AS status,
+         jsonb_build_object('count', v_expiring_qr, 'threshold', 50) AS details,
+         CASE WHEN v_expiring_qr > 50 THEN '建議檢查 QR 碼管理' ELSE NULL END AS recommendation
+  
+  UNION ALL
+  
+  SELECT 'low_balance_cards' AS check_name,
+         CASE WHEN v_low_balance_cards > 20 THEN 'warning' ELSE 'ok' END AS status,
+         jsonb_build_object('count', v_low_balance_cards, 'threshold', 20) AS details,
+         CASE WHEN v_low_balance_cards > 20 THEN '建議提醒用戶充值' ELSE NULL END AS recommendation
+  
+  UNION ALL
+  
+  SELECT 'suspended_members' AS check_name,
+         CASE WHEN v_suspended_members > 10 THEN 'warning' ELSE 'ok' END AS status,
+         jsonb_build_object('count', v_suspended_members, 'threshold', 10) AS details,
+         CASE WHEN v_suspended_members > 10 THEN '建議審核暫停會員' ELSE NULL END AS recommendation
+  
+  UNION ALL
+  
+  SELECT 'inactive_merchants' AS check_name,
+         CASE WHEN v_inactive_merchants > 5 THEN 'warning' ELSE 'ok' END AS status,
+         jsonb_build_object('count', v_inactive_merchants, 'threshold', 5) AS details,
+         CASE WHEN v_inactive_merchants > 5 THEN '建議審核非活躍商戶' ELSE NULL END AS recommendation;
+END;
+$$;
+
+COMMENT ON FUNCTION system_health_check IS '系統健康檢查（需要 super_admin 權限）';
 
 -- ============================================================================

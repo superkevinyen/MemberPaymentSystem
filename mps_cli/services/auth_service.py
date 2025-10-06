@@ -126,6 +126,10 @@ class AuthService(BaseService):
             self.logger.error(f"Merchant login failed: {merchant_code}, error: {e}")
             raise self.handle_service_error("Merchant login", e)
     
+    def login_with_merchant_code(self, merchant_code: str, password: str) -> Dict[str, Any]:
+        """商戶代碼登入（新方法名稱，與 UI 層保持一致）"""
+        return self.login_merchant_with_code(merchant_code, password)
+    
     def logout(self):
         """登出"""
         try:

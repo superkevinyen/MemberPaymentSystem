@@ -284,3 +284,193 @@ class AdminService(BaseService):
             self.logger.error(f"獲取卡片詳情失敗: {card_id}, 錯誤: {e}")
             return None
     
+    # 新增的卡片管理擴展功能
+    def get_all_cards(self, limit: int = 50, offset: int = 0, card_type: Optional[str] = None,
+                     status: Optional[str] = None, owner_name: Optional[str] = None) -> Dict[str, Any]:
+        """分頁獲取所有卡片"""
+        self.log_operation("獲取所有卡片", {
+            "limit": limit,
+            "offset": offset,
+            "card_type": card_type,
+            "status": status,
+            "owner_name": owner_name
+        })
+        
+        params = {
+            "p_limit": limit,
+            "p_offset": offset,
+            "p_card_type": card_type,
+            "p_status": status,
+            "p_owner_name": owner_name
+        }
+        
+        try:
+            result = self.rpc_call("get_all_cards", params)
+            
+            if result:
+                # 計算分頁信息
+                total_count = result[0].get('total_count', 0) if result else 0
+                total_pages = (total_count + limit - 1) // limit
+                current_page = offset // limit
+                
+                cards = [Card.from_dict(card) for card in result]
+                
+                self.logger.info(f"獲取所有卡片成功，返回 {len(cards)} 張卡片")
+                
+                return {
+                    "data": cards,
+                    "pagination": {
+                        "current_page": current_page,
+                        "page_size": limit,
+                        "total_count": total_count,
+                        "total_pages": total_pages,
+                        "has_next": current_page < total_pages - 1,
+                        "has_prev": current_page > 0
+                    }
+                }
+            else:
+                return {
+                    "data": [],
+                    "pagination": {
+                        "current_page": 0,
+                        "page_size": limit,
+                        "total_count": 0,
+                        "total_pages": 0,
+                        "has_next": False,
+                        "has_prev": False
+                    }
+                }
+                
+        except Exception as e:
+            self.logger.error(f"獲取所有卡片失敗: {e}")
+            raise self.handle_service_error("獲取所有卡片", e, {
+                "limit": limit,
+                "offset": offset,
+                "card_type": card_type,
+                "status": status,
+                "owner_name": owner_name
+            })
+    
+    def search_cards_advanced(self, keyword: str, limit: int = 50) -> List[Card]:
+        """高級卡片搜尋"""
+        self.log_operation("高級卡片搜尋", {
+            "keyword": keyword,
+            "limit": limit
+        })
+        
+        params = {
+            "p_keyword": keyword,
+            "p_limit": limit
+        }
+        
+        try:
+            result = self.rpc_call("search_cards", params)
+            
+            if result:
+                cards = [Card.from_dict(card) for card in result]
+                self.logger.info(f"高級卡片搜尋成功，返回 {len(cards)} 張卡片")
+                return cards
+            else:
+                return []
+                
+        except Exception as e:
+            self.logger.error(f"高級卡片搜尋失敗: {e}")
+            raise self.handle_service_error("高級卡片搜尋", e, {
+                "keyword": keyword,
+                "limit": limit
+            })
+    
+    # 新增的交易統計擴展功能
+    def get_today_transaction_stats(self, merchant_id: Optional[str] = None) -> Dict[str, Any]:
+        """今日交易統計"""
+        self.log_operation("獲取今日交易統計", {"merchant_id": merchant_id})
+        
+        params = {"p_merchant_id": merchant_id}
+        
+        try:
+            result = self.rpc_call("get_today_transaction_stats", params)
+            
+            if result and len(result) > 0:
+                stats = result[0]
+                self.logger.info("獲取今日交易統計成功")
+                return stats
+            else:
+                return {}
+                
+        except Exception as e:
+            self.logger.error(f"獲取今日交易統計失敗: {e}")
+            raise self.handle_service_error("獲取今日交易統計", e, {"merchant_id": merchant_id})
+    
+    def get_transaction_trends(self, start_date: str, end_date: str,
+                             merchant_id: Optional[str] = None, group_by: str = "day") -> List[Dict[str, Any]]:
+        """交易趨勢分析"""
+        self.log_operation("獲取交易趨勢分析", {
+            "start_date": start_date,
+            "end_date": end_date,
+            "merchant_id": merchant_id,
+            "group_by": group_by
+        })
+        
+        params = {
+            "p_start_date": start_date,
+            "p_end_date": end_date,
+            "p_merchant_id": merchant_id,
+            "p_group_by": group_by
+        }
+        
+        try:
+            result = self.rpc_call("get_transaction_trends", params)
+            
+            if result:
+                trends = [trend for trend in result]
+                self.logger.info(f"獲取交易趨勢分析成功，返回 {len(trends)} 條記錄")
+                return trends
+            else:
+                return []
+                
+        except Exception as e:
+            self.logger.error(f"獲取交易趨勢分析失敗: {e}")
+            raise self.handle_service_error("獲取交易趨勢分析", e, {
+                "start_date": start_date,
+                "end_date": end_date,
+                "merchant_id": merchant_id,
+                "group_by": group_by
+            })
+    
+    # 新增的系統管理擴展功能
+    def get_system_statistics_extended(self) -> Dict[str, Any]:
+        """獲取擴展系統統計信息"""
+        self.log_operation("獲取擴展系統統計信息", {})
+        
+        try:
+            result = self.rpc_call("get_system_statistics", {})
+            
+            if result and len(result) > 0:
+                stats = result[0]
+                self.logger.info("獲取擴展系統統計信息成功")
+                return stats
+            else:
+                return {}
+                
+        except Exception as e:
+            self.logger.error(f"獲取擴展系統統計信息失敗: {e}")
+            raise self.handle_service_error("獲取擴展系統統計信息", e, {})
+    
+    def system_health_check(self) -> List[Dict[str, Any]]:
+        """系統健康檢查"""
+        self.log_operation("系統健康檢查", {})
+        
+        try:
+            result = self.rpc_call("system_health_check", {})
+            
+            if result:
+                health_checks = [check for check in result]
+                self.logger.info(f"系統健康檢查完成，返回 {len(health_checks)} 項檢查")
+                return health_checks
+            else:
+                return []
+                
+        except Exception as e:
+            self.logger.error(f"系統健康檢查失敗: {e}")
+            raise self.handle_service_error("系統健康檢查", e, {})
+    

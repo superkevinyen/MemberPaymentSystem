@@ -11,6 +11,8 @@ class Card(BaseModel, StatusMixin, TimestampMixin):
     card_no: Optional[str] = None
     card_type: Optional[str] = None
     owner_member_id: Optional[str] = None
+    owner_name: Optional[str] = None  # 擁有者名稱（從 RPC 查詢返回）
+    owner_phone: Optional[str] = None  # 擁有者電話（從 RPC 查詢返回）
     name: Optional[str] = None
     balance: Optional[float] = None
     points: Optional[int] = None

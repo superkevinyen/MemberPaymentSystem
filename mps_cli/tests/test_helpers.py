@@ -70,12 +70,13 @@ def setup_admin_auth(email: str = None, password: str = None) -> AuthService:
 
 def generate_test_member_data() -> Dict[str, str]:
     """生成測試會員數據（使用固定密碼）"""
-    timestamp = str(int(time.time()))[-6:]
+    # 使用更高精度的時間戳和隨機數確保唯一性
+    timestamp = str(int(time.time() * 1000))[-8:]  # 毫秒級時間戳
     random_num = str(random.randint(100, 999))
     
     return {
         "name": f"測試會員_{timestamp}",
-        "phone": f"138{timestamp}{random_num}"[:11],
+        "phone": f"138{timestamp[:8]}"[:11],  # 確保手機號唯一
         "email": f"test_{timestamp}_{random_num}@example.com",
         "password": "test123456"  # 固定密碼，方便後續角色測試
     }
@@ -222,12 +223,29 @@ def print_test_summary(results: Dict[str, bool]) -> bool:
         print("\n⚠️  部分測試失敗，請檢查錯誤訊息")
         return False
 
-def create_test_member(auth_service: AuthService, with_password: bool = True) -> tuple:
-    """創建測試會員並返回 (member_id, member_data)"""
+def create_test_member(auth_service: AuthService, with_password: bool = True, 
+                      name: str = None, phone: str = None, email: str = None) -> tuple:
+    """創建測試會員並返回 (member_id, member_data)
+    
+    Args:
+        auth_service: 認證服務
+        with_password: 是否設置密碼
+        name: 自定義會員名稱（可選）
+        phone: 自定義手機號碼（可選）
+        email: 自定義郵箱（可選）
+    """
     member_service = MemberService()
     member_service.set_auth_service(auth_service)
     
     member_data = generate_test_member_data()
+    
+    # 使用自定義參數覆蓋生成的數據
+    if name:
+        member_data['name'] = name
+    if phone:
+        member_data['phone'] = phone
+    if email:
+        member_data['email'] = email
     
     try:
         member_id = member_service.create_member(

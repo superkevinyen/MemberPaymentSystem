@@ -257,3 +257,125 @@ class PaymentService(BaseService):
         except Exception as e:
             self.logger.error(f"計算折扣預覽失敗: {card_id}, 錯誤: {e}")
             return {"error": str(e)}
+    
+    # 新增的交易統計擴展功能
+    def get_today_transaction_stats(self, merchant_id: Optional[str] = None) -> Dict[str, Any]:
+        """今日交易統計"""
+        self.log_operation("獲取今日交易統計", {"merchant_id": merchant_id})
+        
+        params = {"p_merchant_id": merchant_id}
+        
+        try:
+            result = self.rpc_call("get_today_transaction_stats", params)
+            
+            if result and len(result) > 0:
+                stats = result[0]
+                self.logger.info("獲取今日交易統計成功")
+                return stats
+            else:
+                return {}
+                
+        except Exception as e:
+            self.logger.error(f"獲取今日交易統計失敗: {e}")
+            raise self.handle_service_error("獲取今日交易統計", e, {"merchant_id": merchant_id})
+    
+    def get_transaction_trends(self, start_date: str, end_date: str,
+                             merchant_id: Optional[str] = None, group_by: str = "day") -> List[Dict[str, Any]]:
+        """交易趨勢分析"""
+        self.log_operation("獲取交易趨勢分析", {
+            "start_date": start_date,
+            "end_date": end_date,
+            "merchant_id": merchant_id,
+            "group_by": group_by
+        })
+        
+        params = {
+            "p_start_date": start_date,
+            "p_end_date": end_date,
+            "p_merchant_id": merchant_id,
+            "p_group_by": group_by
+        }
+        
+        try:
+            result = self.rpc_call("get_transaction_trends", params)
+            
+            if result:
+                trends = [trend for trend in result]
+                self.logger.info(f"獲取交易趨勢分析成功，返回 {len(trends)} 條記錄")
+                return trends
+            else:
+                return []
+                
+        except Exception as e:
+            self.logger.error(f"獲取交易趨勢分析失敗: {e}")
+            raise self.handle_service_error("獲取交易趨勢分析", e, {
+                "start_date": start_date,
+                "end_date": end_date,
+                "merchant_id": merchant_id,
+                "group_by": group_by
+            })
+    
+    def get_merchant_transactions_advanced(self, merchant_id: str, limit: int = 50,
+                                         offset: int = 0, start_date: Optional[str] = None,
+                                         end_date: Optional[str] = None) -> Dict[str, Any]:
+        """獲取商戶交易記錄（高級）"""
+        self.log_operation("獲取商戶交易記錄", {
+            "merchant_id": merchant_id,
+            "limit": limit,
+            "offset": offset,
+            "start_date": start_date,
+            "end_date": end_date
+        })
+        
+        params = {
+            "p_merchant_id": merchant_id,
+            "p_limit": limit,
+            "p_offset": offset,
+            "p_start_date": start_date,
+            "p_end_date": end_date
+        }
+        
+        try:
+            result = self.rpc_call("get_merchant_transactions", params)
+            
+            if result:
+                # 計算分頁信息
+                total_count = result[0].get('total_count', 0) if result else 0
+                total_pages = (total_count + limit - 1) // limit
+                current_page = offset // limit
+                
+                transactions = [Transaction.from_dict(tx) for tx in result]
+                
+                self.logger.info(f"獲取商戶交易記錄成功: {merchant_id}, 返回 {len(transactions)} 筆")
+                
+                return {
+                    "data": transactions,
+                    "pagination": {
+                        "current_page": current_page,
+                        "page_size": limit,
+                        "total_count": total_count,
+                        "total_pages": total_pages,
+                        "has_next": current_page < total_pages - 1,
+                        "has_prev": current_page > 0
+                    }
+                }
+            else:
+                return {
+                    "data": [],
+                    "pagination": {
+                        "current_page": 0,
+                        "page_size": limit,
+                        "total_count": 0,
+                        "total_pages": 0,
+                        "has_next": False,
+                        "has_prev": False
+                    }
+                }
+                
+        except Exception as e:
+            self.logger.error(f"獲取商戶交易記錄失敗: {merchant_id}, 錯誤: {e}")
+            raise self.handle_service_error("獲取商戶交易記錄", e, {
+                "merchant_id": merchant_id,
+                "limit": limit,
+                "offset": offset
+            })

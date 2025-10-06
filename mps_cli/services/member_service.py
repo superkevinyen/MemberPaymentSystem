@@ -411,3 +411,140 @@ class MemberService(QueryService):
         except Exception as e:
             self.logger.error(f"檢查會員權限失敗: {member_id}, 卡片: {card_id}, 錯誤: {e}")
             return None
+    
+    # 新增的會員管理擴展功能
+    def get_all_members(self, limit: int = 50, offset: int = 0, status: Optional[str] = None) -> Dict[str, Any]:
+        """分頁獲取所有會員"""
+        self.log_operation("獲取所有會員", {
+            "limit": limit,
+            "offset": offset,
+            "status": status
+        })
+        
+        params = {
+            "p_limit": limit,
+            "p_offset": offset,
+            "p_status": status
+        }
+        
+        try:
+            result = self.rpc_call("get_all_members", params)
+            
+            if result:
+                # 計算分頁信息
+                total_count = result[0].get('total_count', 0) if result else 0
+                total_pages = (total_count + limit - 1) // limit
+                current_page = offset // limit
+                
+                members = [Member.from_dict(member) for member in result]
+                
+                self.logger.info(f"獲取所有會員成功，返回 {len(members)} 個會員")
+                
+                return {
+                    "data": members,
+                    "pagination": {
+                        "current_page": current_page,
+                        "page_size": limit,
+                        "total_count": total_count,
+                        "total_pages": total_pages,
+                        "has_next": current_page < total_pages - 1,
+                        "has_prev": current_page > 0
+                    }
+                }
+            else:
+                return {
+                    "data": [],
+                    "pagination": {
+                        "current_page": 0,
+                        "page_size": limit,
+                        "total_count": 0,
+                        "total_pages": 0,
+                        "has_next": False,
+                        "has_prev": False
+                    }
+                }
+                
+        except Exception as e:
+            self.logger.error(f"獲取所有會員失敗: {e}")
+            raise self.handle_service_error("獲取所有會員", e, {
+                "limit": limit,
+                "offset": offset,
+                "status": status
+            })
+    
+    def search_members_advanced(self, name: Optional[str] = None, phone: Optional[str] = None,
+                               email: Optional[str] = None, member_no: Optional[str] = None,
+                               status: Optional[str] = None, limit: int = 50) -> List[Member]:
+        """高級會員搜尋"""
+        self.log_operation("高級會員搜尋", {
+            "name": name,
+            "phone": phone,
+            "email": email,
+            "member_no": member_no,
+            "status": status,
+            "limit": limit
+        })
+        
+        params = {
+            "p_name": name,
+            "p_phone": phone,
+            "p_email": email,
+            "p_member_no": member_no,
+            "p_status": status,
+            "p_limit": limit
+        }
+        
+        try:
+            result = self.rpc_call("search_members_advanced", params)
+            
+            if result:
+                members = [Member.from_dict(member) for member in result]
+                self.logger.info(f"高級會員搜尋成功，返回 {len(members)} 個會員")
+                return members
+            else:
+                return []
+                
+        except Exception as e:
+            self.logger.error(f"高級會員搜尋失敗: {e}")
+            raise self.handle_service_error("高級會員搜尋", e, {
+                "name": name,
+                "phone": phone,
+                "email": email,
+                "member_no": member_no,
+                "status": status
+            })
+    
+    def update_member_profile(self, member_id: str, name: Optional[str] = None,
+                            phone: Optional[str] = None, email: Optional[str] = None) -> bool:
+        """更新會員資料"""
+        self.log_operation("更新會員資料", {
+            "member_id": member_id,
+            "name": name,
+            "phone": phone,
+            "email": email
+        })
+        
+        params = {
+            "p_member_id": member_id,
+            "p_name": name,
+            "p_phone": phone,
+            "p_email": email
+        }
+        
+        try:
+            result = self.rpc_call("update_member_profile", params)
+            
+            if result:
+                self.logger.info(f"會員資料更新成功: {member_id}")
+                return True
+            else:
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"會員資料更新失敗: {member_id}, 錯誤: {e}")
+            raise self.handle_service_error("更新會員資料", e, {
+                "member_id": member_id,
+                "name": name,
+                "phone": phone,
+                "email": email
+            })
